@@ -124,3 +124,36 @@ GENERATED class -> either provide the font repo's generated layout via
 wrong glyphs — and if you must, verify a punctuation-heavy cue's still at
 full resolution, in the Preview tab, before rendering.** "It worked on the
 last song" is not evidence; slot agreement is per-song luck.
+
+## The five-font lineup (2026-09-30, same song, same motion deck)
+
+Five PREETI-class fonts were verified and rendered end to end for Allare,
+all delivered to `G:/Lyrical Video/Allare/`:
+
+| Video | Font | Character |
+|---|---|---|
+| `Allare - Motion - Abhinav.mp4` | Abhinav | the Perfect Example font; classic calligraphic bold |
+| `Allare - Motion - Ananda Lipi.mp4` | Ananda Lipi Bold BT | heavy traditional headline |
+| `Allare - Motion - Himalaya.mp4` | Himalayabold | soft rounded classic |
+| `Allare - Motion - Shreenath.mp4` | Shreenath Bold | condensed tall display |
+| `Allare - Motion - Katmandu.mp4` | Katmandu Regular | thin classic serif-like |
+
+Verification chain per font (the procedure to repeat):
+
+1. **Class check** — `sweep.json` class must be PREETI (gotcha 30).
+2. **Round-trip** — `py scripts/lrc_legacy.py song.lrc out/_rt.lrc` must
+   report zero "not round-trip" lines for the song.
+3. **Glyph still at 3x** — render one punctuation-heavy cue
+   (`--prepare-only` + `npx remotion still`), crop the first word, zoom,
+   LOOK at it. Ten candidates were screened this way; meghubold failed
+   visually (सो wrong) despite passing the class and round-trip checks,
+   which is exactly why step 3 exists.
+4. **Render + critique** — all five videos critique PASS (20-30/30 text
+   present, no-edge-clip, duration).
+
+Parallel-render note: a render writes `src/lyrics.generated.js` and
+`public/` in ITS OWN tree, so four fonts can render at once only from
+separate `git worktree add --detach` clones sharing one `node_modules`
+junction (`mklink /J`). In one tree, renders must be sequential or the
+last-prepared font wins (stills come out byte-identical — the
+identical-stills lesson, now with its cause named).
