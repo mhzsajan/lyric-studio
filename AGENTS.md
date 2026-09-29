@@ -217,7 +217,9 @@ src/LyricOverlay.jsx  Pure function of frame -> text state. cueStyle(),
                       wordState(), letterState() are exported for reuse
                       without React. cue = last stamp <= t; previous line
                       drifts up and away.
-src/animations.js     styleFor() / sizeFor() / jitterFor() / positionFor():
+src/animations.js     STYLES (22) + styleFor() (seeded deck shuffle:
+                      every style appears once before any repeats) /
+                      sizeFor() / jitterFor() / positionFor():
                       deterministic per-line and per-word choices, so
                       re-renders reproduce byte-for-byte.
 src/word-timing.js    wordTimings(cue, {anchors}): derives per-word times
@@ -235,6 +237,7 @@ src/parse-lrc.mjs     LRC -> cues {time, end, text}. Handles [mm:ss.xx]
 | `docs/PLAYBOOK.md` | why Remotion, what actually made rendering fast (and what did not), animation guidance, Remotion-only traps |
 | `docs/REFERENCE.md` | everything measured off the target video, and the gaps vs ours |
 | `docs/FONTS.md` | the 15 legacy `01 Fonts` vs 9 Unicode fonts that need no transcoding |
+| `docs/MOTIONS.md` | the 22-style motion catalog, deck-shuffle picker, the Allare motion recipe, and the AMS Cinema font-class failure |
 
 **Scripts** — all rerunnable; prefer these over re-deriving anything by hand
 
@@ -837,6 +840,20 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     promise nobody kept.** Resolve it in favour of the caller, and make the
     verification asymmetric enough that it notices.
 
+30. **LEGACY FONT CLASS DECIDES CORRECTNESS — CHECK sweep.json BEFORE
+    RENDERING.** The first motion render of Allare shipped broken glyphs
+    because AMS Cinema was fed Preeti key sequences: its sweep.json class is
+    GENERATED (mapping "ams", "dropped 3 slot(s)"), not PREETI, so every
+    divergent slot rendered the wrong glyph — and Allare's extension marks
+    (`..`, `==`, `=:` in almost every line) hit exactly those slots. The
+    user caught it in seconds; no gate did, because glyph identity is
+    explicitly outside critique.py's reach and the `--prepare-only` still
+    was not inspected. AMS Manthan had worked on two songs by slot
+    agreement, which was luck, not evidence. Rule: **PREETI class -> plain
+    `--legacy-font` is safe; GENERATED class -> use `--font-slug` (layout +
+    hard gate) or verify a punctuation-heavy cue's still at full resolution
+    before rendering.** Full story: docs/MOTIONS.md.
+
 ## The shape of the roam audio bug, in one line
 
 A component with **two** return paths will eventually have a side element in
@@ -886,25 +903,22 @@ before trusting any figure about a render.
 
 ## Render state
 
-**Proven and current** — `out/Allare letter.mp4`, 6.4 MiB, 417s, 1920x1080@30,
-h264, pure black, no audio, Abhinav, roam + word-by-word karaoke + per-letter
-pop. Verified: 109 cues, conjuncts and matras intact, shirorekha continuous at
-the capped size, text stays inside frame. This is the reference output for the
-current house style.
+**Proven and current** — `out/Allare - Motion.mp4` (2026-09-30), the first
+motion-pack song: 6:58, 12524 frames @30fps, h264, pure black, no audio,
+**Abhinav** (PREETI class), roam + 22-style deck shuffle (no repeats within
+the song) + 120 BPM beat grid (tracker said 123.05; forced with --bpm 120).
+Critique PASS 30/30 on all checks. First cut used AMS Cinema and shipped
+wrong glyphs (gotcha 30); re-rendered on Abhinav after a full-res still
+check. Full recipe and motion catalog: docs/MOTIONS.md.
 
-`out/Allare wordanim.mp4` (6.1 MiB) is the same without the letter layer.
+**Delivered (G:\Lyrical Video\Allare\Allare - Motion.mp4, 2026-09-30)** —
+Abhinav, motion deck, beats. Supersedes the mp4 rows below for Allare.
 
-**Delivered deliverables, all needing replacement:**
-
-| File | Problem |
-|---|---|
-| `Final\Allare\Allare - Text Only.mov` | 3.2 GB ProRes. Fonts correct (35/35 lines round-tripped). Re-render as mp4. |
-| `Final\Ritu\Ritu - Text Only.mp4` | **Verified wrong text**: at t=145 s it shows text matching no cue in `Ritu.lrc`. Our render correctly shows `सजिलै माया पाउन,` (the cue at 144.17 s). |
-| `Final\Kali Kali\Kali Kali - Text Only.mp4` | User reports wrong fonts. **Not independently verified.** |
-
-**Never delivered through `--legacy-font`:** Kali Kali, Ritu. Allare is the only
-song proven end to end. Run `--report-only` and inspect a frame before shipping
-either.
+**Delivered from the predecessor pipeline (2026-09-28/29, lyric-video-
+remotion):** Allare (ProRes alpha .mov, Nirmala), Kali Kali and Ritu
+(mp4, roam+glow, AMS Manthan, edge-scan clean). AMS Manthan is
+GENERATED-class — those two renders were slot-agreement luck (gotcha 30);
+a re-render through lyric-studio should use `--font-slug`/Abhinav.
 
 **Not yet implemented** (all measured, see `docs/REFERENCE.md`): head and tail
 title cards, a white halo on *every* line (`glow` is one style in the pool, so
