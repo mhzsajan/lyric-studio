@@ -1,0 +1,12 @@
+{
+  "kind": "aurora",
+  "palette": {
+    "bg": "#0a0a12",
+    "accent1": "#e8b34b",
+    "accent2": "#c25b6a",
+    "glow": "#f5e6c8"
+  },
+  "pulse": 0.05,
+  "particles": 40,
+  "vignette": 0.55
+}

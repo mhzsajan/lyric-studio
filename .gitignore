@@ -1,0 +1,13 @@
+node_modules/
+out/
+public/
+src/lyrics.generated.js
+src/calib-samples.generated.js
+demo/
+*.log
+.DS_Store
+__pycache__/
+# synthesized test audio is regenerable (py scripts/make_test_assets.py);
+# the .lrc beside it is the test contract and IS committed
+test-assets/*.wav
+test-assets/*.mp3

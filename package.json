@@ -1,0 +1,27 @@
+{
+  "name": "lyric-studio",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Song Timer .lrc + audio -> lyric video. Two products: the proven white-on-black overlay (Videosync2 Add/Screen) and a styled full-frame kinetic video. Beat sync, font gates, and a render-critique loop built in. Successor to lyric-video-remotion; fonts come from the sibling nepali-legacy-fonts repo.",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.js",
+    "render": "node render.mjs",
+    "preview": "node render.mjs --preview",
+    "report": "node render.mjs --report-only",
+    "prepare": "node render.mjs --prepare-only",
+    "batch": "node render.mjs --batch",
+    "make": "node scripts/make_video.mjs",
+    "beats": "py scripts/detect_beats.py",
+    "critique": "py scripts/critique.py",
+    "gate": "py scripts/font_gate.py",
+    "check": "python scripts/check_output.py"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.530",
+    "@remotion/media-utils": "4.0.530",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "4.0.530"
+  }
+}
