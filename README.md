@@ -110,7 +110,8 @@ All the inherited verification scripts came along: `check_output.py`,
 
 | | |
 |---|---|
-| [`AGENTS.md`](AGENTS.md) | orientation + the ~26 inherited gotchas + the new layer. **Read before changing anything.** |
+| [`AGENTS.md`](AGENTS.md) | orientation + the 29 gotchas (26 inherited, 3 found by running this) + the new layer. **Read before changing anything.** |
+| [`docs/PIPELINE.md`](docs/PIPELINE.md) | what each stage proves, and what it cannot |
 | [`styles/house.md`](styles/house.md) | the Look contract |
 | [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | why Remotion; what made rendering fast |
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | measurements of the target video |
