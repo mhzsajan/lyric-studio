@@ -132,6 +132,24 @@ if (!NO_BEATS) {
     if ((res.status || 0) !== 0) {
       console.warn("  detect_beats failed -- continuing WITHOUT beat sync.");
       beatsFile = null;
+    } else {
+      // A grid the detector itself marked unusable is not passed on. Snapping
+      // to a grid that is not the song's tempo pulls words AWAY from the
+      // hand-tapped .lrc times, which is strictly worse than the even
+      // distribution -- so the default has to be "off unless earned", and
+      // --bpm (a tempo you supply) is how you earn it. See
+      // detect_beats.py's trust check and gotcha 30.
+      let usable = true;
+      try {
+        usable = JSON.parse(fs.readFileSync(beatsFile, "utf8")).usable !== false;
+      } catch (err) {
+        console.warn("  could not read " + beatsFile + ": " + err.message + " -- skipping beats");
+        beatsFile = null;
+      }
+      if (beatsFile && !usable) {
+        console.log("  beats NOT applied (detector marked the grid untrusted).");
+        beatsFile = null;
+      }
     }
   }
 } else {

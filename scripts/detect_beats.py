@@ -180,6 +180,11 @@ def main():
     ap.add_argument("--ffmpeg", help="path to an ffmpeg binary")
     ap.add_argument("--expect-bpm", type=float, help="self-test: fail if detected tempo is off")
     ap.add_argument("--tol", type=float, default=2.0, help="bpm tolerance for --expect-bpm")
+    ap.add_argument("--min-confidence", type=float, default=3.0,
+                    help="below this the grid is marked usable:false and the "
+                         "summary tells you to render with --no-beats. The "
+                         "synthetic click track scores ~5.0; Allare (real pop) "
+                         "scored 2.6-2.8 at every forced tempo, i.e. guessing.")
     a = ap.parse_args()
 
     if not os.path.exists(a.audio):
@@ -210,12 +215,43 @@ def main():
         method = "builtin(forced)"
 
     beats = [round(float(b), 4) for b in beats if 0 <= b <= duration]
+
+    # A TRUSTWORTHINESS CHECK, NOT A CONFIDENCE NUMBER
+    # -------------------------------------------------
+    # The synthetic click track is 120.00 exactly and this reports it. Real
+    # music is a different question, and on Allare (a Nepali pop track) the
+    # answer turned out to be "don't". Three measurements forced that call:
+    #
+    #   bpm 123.05, confidence 2.64      confidence at FORCED 120: 2.59
+    #   confidence at FORCED 123: 2.64   confidence at FORCED  60: 2.79
+    #   inter-beat sd 0.0696s on a 0.4874s mean (14% jitter -- a real grid is
+    #   near-uniform; this much spread means the snap step is chasing onsets
+    #   that are not the beat)
+    #   median distance from a cue start to the nearest beat: 0.143s, and only
+    #   13 of 35 cues within 0.1s
+    #
+    # When the confidence at a forced tempo barely moves, the comb filter is
+    # not discriminating between tempi, so its answer is not evidence. And when
+    # the grid sits a median 0.143s from the SUNG cue times, snapping pulls
+    # words OFF the hand-tapped timings toward a grid that may not be the song's
+    # -- strictly worse than the even distribution, which at least stays inside
+    # the phrase.
+    #
+    # So: below --min-confidence the file is written (it is still useful to
+    # look at) but marked "usable": false, and the summary says to render with
+    # --no-beats. make_video.mjs and render.mjs read that flag; nobody has to
+    # remember this paragraph.
+    usable = True
+    if conf is not None and not a.bpm and conf < a.min_confidence:
+        usable = False
+
     doc = {
         "bpm": round(float(tempo), 2),
         "beats": beats,
         "method": method,
         "confidence": None if conf is None else round(float(conf), 3),
         "duration": round(duration, 3),
+        "usable": usable,
     }
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
@@ -228,7 +264,17 @@ def main():
              beats[0] if beats else "-", beats[-1] if beats else "-"))
     if conf is not None:
         print("    confidence : %.2f (mean onset strength on beats)" % conf)
-    print("    wrote      : %s" % a.out)
+    if not usable:
+        print("")
+        print("    NOT USABLE for snapping. Confidence below %.1f means this grid"
+              % a.min_confidence)
+        print("    is not evidence of the song's tempo (check it against a forced")
+        print("    --bpm: if the number barely moves, the tracker is guessing).")
+        print("    A wrong grid pulls words OFF your hand-tapped .lrc times, which")
+        print("    is worse than the even distribution. Render with --no-beats.")
+        print("    " + a.out)
+    else:
+        print("    wrote      : %s" % a.out)
 
     if a.expect_bpm is not None:
         if abs(doc["bpm"] - a.expect_bpm) > a.tol:
