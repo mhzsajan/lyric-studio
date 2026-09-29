@@ -51,6 +51,9 @@ const PUBLIC = path.join(HERE, "public");
 const STYLES = [
   "fade", "rise", "pop", "slide-left", "slide-right",
   "typewriter", "blur-in", "zoom-through", "glow",
+  "spring", "swing", "flip-in", "float-up", "drop-bounce",
+  "scale-up", "letter-spread", "line-wipe", "roll-in", "zoom-fade",
+  "breathe", "glow-pulse", "pendulum",
 ];
 
 // -- args ------------------------------------------------------------------

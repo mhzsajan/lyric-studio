@@ -29,6 +29,7 @@ function hashString(str) {
 }
 
 export const STYLES = [
+  // -- the original nine -------------------------------------------------------
   "fade",
   "rise",
   "pop",
@@ -38,7 +39,50 @@ export const STYLES = [
   "blur-in",
   "zoom-through",
   "glow",
+  // -- choreographed entrances (one-shot, settle and hold) ---------------------
+  "spring",        // overshoots past 100% and settles back (Motion-style spring)
+  "swing",         // drops in swinging like a pendulum released off-centre
+  "flip-in",       // 3D rotateX around the horizontal axis
+  "float-up",      // rises softly with a little defocus, like a bubble
+  "drop-bounce",   // falls from above and bounces to rest
+  "scale-up",      // grows from small, ease-out-quart
+  "letter-spread", // arrives wide (scaleX) and tightens into place
+  "line-wipe",     // revealed by a rising bottom-edge wipe
+  "roll-in",       // spins in like a wheel and settles at rest
+  "zoom-fade",     // dolly-in: starts large and near, settles back
+  // -- persistent-life (keep moving while the line holds) -----------------------
+  "breathe",       // slow scale oscillation for the whole hold
+  "glow-pulse",    // the bloom itself breathes on a slow sine
+  "pendulum",      // barely-there continuous sway around centre
 ];
+
+/**
+ * Per-song shuffled DEAL of styles: like a card deck, every style appears
+ * exactly once before any repeats — with 22 styles a 40-cue song shows each
+ * motion at least once and never the same motion twice in a row. Reshuffles
+ * deterministically from the seed, so a re-render replays the same order.
+ * (The old hash+multiplier pick could repeat a style back to back; the deck
+ * is why this can't.)
+ */
+const deckCache = new Map();
+export function styleSequenceFor(seedText, maxIndex) {
+  const seed = String(seedText);
+  let deck = deckCache.get(seed);
+  if (!deck || deck.length <= maxIndex) {
+    const rnd = seededRandom(hashString("deck:" + seed));
+    deck = [];
+    while (deck.length <= maxIndex) {
+      const shoe = STYLES.slice();
+      for (let i = shoe.length - 1; i > 0; i--) {
+        const k = Math.floor(rnd() * (i + 1));
+        [shoe[i], shoe[k]] = [shoe[k], shoe[i]];
+      }
+      deck.push(...shoe);
+    }
+    deckCache.set(seed, deck);
+  }
+  return deck;
+}
 
 /**
  * Pick a style for one cue. Deterministic for a given (seed, index).
@@ -48,8 +92,7 @@ export const STYLES = [
  */
 export function styleFor(seedText, index, force) {
   if (force && STYLES.includes(force)) return force;
-  const rnd = seededRandom(hashString(String(seedText)) + index * 2654435761);
-  return STYLES[Math.floor(rnd() * STYLES.length) % STYLES.length];
+  return styleSequenceFor(seedText, index)[index];
 }
 
 /** Per-cue jitter so timings are not perfectly uniform frame to frame. */
