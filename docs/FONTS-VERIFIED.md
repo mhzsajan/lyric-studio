@@ -8,7 +8,7 @@ to it.
 The distinction matters because "the font repo says the font's keys verify"
 and "this font can write these lyrics" are different claims, and only the
 second one decides what the audience sees. See AGENTS.md gotchas 23, 34,
-35 and 37.
+35 and 38.
 
 **Authority note:** this list and the font repo's
 [`docs/RENDER-TESTED.md`](../../nepali-legacy-fonts/docs/RENDER-TESTED.md)
