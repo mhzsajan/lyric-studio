@@ -188,6 +188,37 @@ if (SKIP_CRITIQUE) {
     "--lrc", lrc,
     "--mode", STYLED ? "styled" : "overlay",
   ];
+  // PASS THE ENDS, or critique samples the wrong instants.
+  //
+  // critique.py needs each cue's real end to know when a line is on screen, and
+  // without --ends it falls back to "the next line's start" -- which is exactly
+  // the window AFTER the line finished. So it sampled 4 silent gaps on Allare
+  // and reported "no lit text" on a file whose text-present was 20/24. That is
+  // gotcha 31's shape for the fourth time: the input exists, the consumer needs
+  // it, and nothing delivered it, so the check quietly measured the wrong thing
+  // and blocked a correct render.
+  //
+  // The lookup is the same rule render.mjs uses (strip a `start` infix, then
+  // try `.remotion_end.lrc` and `.ends.txt`), so both stages agree on which
+  // companion is this song's.
+  const lrcBase = path.basename(lrc).replace(/\.lrc$/i, "");
+  const pairBase = lrcBase.replace(/[._-](?:remotion_)?start$/i, "");
+  const endsCandidates = [
+    path.join(path.dirname(lrc), pairBase + ".remotion_end.lrc"),
+    path.join(path.dirname(lrc), pairBase + ".ends.txt"),
+    lrc.replace(/\.lrc$/i, ".ends.txt"),
+  ];
+  const endsFile = endsCandidates.find((p) => fs.existsSync(p));
+  if (endsFile) {
+    args.push("--ends", endsFile);
+  } else {
+    console.warn(
+      "  note: no ends companion found for " + lrcBase + ".\n" +
+      "        critique will sample between lines and may report false\n" +
+      "        'no lit text'. Looking for:\n" +
+      endsCandidates.map((p) => "          " + p).join("\n")
+    );
+  }
   if (NO_AUDIO) {
     args.push("--no-audio");
     const len = Number(val("--length"));
