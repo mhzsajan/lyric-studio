@@ -136,13 +136,18 @@ wrong.**
 Five PREETI-class fonts were verified and rendered end to end for Allare,
 all delivered to `G:/Lyrical Video/Allare/`:
 
-| Video | Font | Character |
-|---|---|---|
-| `Allare - Motion - Abhinav.mp4` | Abhinav | the Perfect Example font; classic calligraphic bold |
-| `Allare - Motion - Ananda Lipi.mp4` | Ananda Lipi Bold BT | heavy traditional headline |
-| `Allare - Motion - Himalaya.mp4` | Himalayabold | soft rounded classic |
-| `Allare - Motion - Shreenath.mp4` | Shreenath Bold | condensed tall display |
-| `Allare - Motion - Katmandu.mp4` | Katmandu Regular | thin classic serif-like |
+| Video | Font | Character | Eye-check verdict (2026-09-30) |
+|---|---|---|---|
+| `Allare - Motion - Abhinav.mp4` | Abhinav | the Perfect Example font; classic calligraphic bold | ❌ user still caught a wrong spelling — glyph-level defect, gotcha 37 |
+| `Allare - Motion - Ananda Lipi.mp4` | Ananda Lipi Bold BT | heavy traditional headline | ✅ confirmed |
+| `Allare - Motion - Himalaya.mp4` | Himalayabold | soft rounded classic | ✅ confirmed |
+| `Allare - Motion - Shreenath.mp4` | Shreenath Bold | condensed tall display | ✅ confirmed |
+| `Allare - Motion - Katmandu.mp4` | Katmandu Regular | thin classic serif-like | ✅ confirmed |
+
+The 42-font batch that followed added 7 more eye-confirmed fonts
+(arap007, cv-haha, mkali, pawang + Unicode arya/kalam/rajdhani) and moved
+deepankar to the failed column alongside abhinav. The authoritative list:
+docs/FONTS-VERIFIED.md (and the font repo's docs/RENDER-TESTED.md).
 
 Verification chain per font (the procedure to repeat):
 

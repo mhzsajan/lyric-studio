@@ -1134,6 +1134,18 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     2026-09-30; local clone `C:/Users/o0o/tools/lyric-video-generator`
     remains as a git fossil but is no longer the reference. Cite the
     archive, not the clone.
+37. **RECOMMEND FONTS ONLY FROM `docs/FONTS-VERIFIED.md` — the song-tested,
+    human-verified list.** Gates cannot certify a font: all 29 AMS layouts
+    lack candrabindu+virama (gate-rejected in seconds on Allare), 5 fonts
+    that *declare* PREETI print raw ASCII with exit 0 (0012-arap, 0017-arap,
+    ananda-fanko-2, arap-010, ganga-1 — caught by pixel test, not by any
+    gate), and 2 genuine PREETI fonts (deepankar, abhinav) spell individual
+    words wrong at the glyph level while every automated check stays green.
+    11 of the 42 preferred fonts survived a full render + human eye-check of
+    the same song (2026-09-30): arap007, cv-haha, himalayabold, katmandu,
+    mkali, pawang, shreenath-bold (PREETI, `--legacy-font`); arya, kalam,
+    rajdhani (UNICODE, `--font-file`); plus yantramanav (the Unicode
+    default). The font repo's `docs/RENDER-TESTED.md` mirrors this list.
 
 37. **A FALLBACK THAT PRODUCES A PLAUSIBLE WRONG DELIVERABLE IS A FAILURE,
     NOT A DEFAULT** (gotcha 37 — the other half of gotcha 19, and the
@@ -1245,8 +1257,14 @@ re-rendered twice): 6:57.5 (417.1 s, 12513 frames @30fps), h264, no audio,
 **Abhinav / Ananda Lipi Bold BT / Himalayabold / Shreenath Bold / Katmandu**
 (all PREETI class), roam + 22-style deck shuffle + 120 BPM beat grid
 (tracker said 123.05; forced with --bpm 120). First delivery drew जाउू/
-हेो in every font — the decomposed-key bug, gotcha 31; re-delivered after
-the preetimapper fix (3825634, gotcha 35). Full recipe and motion catalog:
+हेो in every font — the decomposed-key bug, gotcha 35; re-delivered after
+the preetimapper fix (3825634, gotcha 35). Human eye-check verdict
+(2026-09-30): 4 of 5 confirmed (Ananda Lipi, Himalayabold, Shreenath,
+Katmandu); **Abhinav still spells a word wrong at the glyph level** — same
+class of failure as deepankar in the 42-font batch, see gotcha 37. The
+42-font verification batch added 7 more eye-confirmed fonts; videos live in
+`G:\Lyrical Video\Allare\fonts-to-verify\` and the authoritative list is
+docs/FONTS-VERIFIED.md. Full recipe and motion catalog:
 docs/MOTIONS.md.
 
 **Superseded** — `out/Allare - Motion.mp4` (2026-09-30), the first

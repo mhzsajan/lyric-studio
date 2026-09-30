@@ -116,6 +116,7 @@ All the inherited verification scripts came along: `check_output.py`,
 | [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | why Remotion; what made rendering fast |
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | measurements of the target video |
 | [`docs/FONTS.md`](docs/FONTS.md) | render-time font notes (authority: the font repo) |
+| [`docs/FONTS-VERIFIED.md`](docs/FONTS-VERIFIED.md) | **the song-tested font list — recommend only from here** (11 proven fonts; 34 proven failures) |
 | [font repo README](https://github.com/mhzsajan/nepali-legacy-fonts) | the 214-font catalogue, tiers, layouts, `check_song.py` |
 
 ## Requirements
