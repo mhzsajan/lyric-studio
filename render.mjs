@@ -49,18 +49,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOTION_LEVELS } from "./src/motion.js";
+import { WORD_ANIMS, LETTER_ANIMS, STYLE_ANIMS } from "./src/anim-pools.mjs";
+const WORD_ANIM_LIST = WORD_ANIMS;
+const LETTER_ANIM_LIST = LETTER_ANIMS;
+const STYLE_ANIM_LIST = STYLE_ANIMS;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GENERATED = path.join(HERE, "src", "lyrics.generated.js");
 const PUBLIC = path.join(HERE, "public");
 
-const STYLES = [
-  "fade", "rise", "pop", "slide-left", "slide-right",
-  "typewriter", "blur-in", "zoom-through", "glow",
-  "spring", "swing", "flip-in", "float-up", "drop-bounce",
-  "scale-up", "letter-spread", "line-wipe", "roll-in", "zoom-fade",
-  "breathe", "glow-pulse", "pendulum",
-];
+// The style list is the one in src/anim-pools.mjs, which is also where
+// --word-anim and --letter-anim come from. This used to be a local copy, which
+// is how every newly added effect ended up rejected by its own validator.
+const STYLES = STYLE_ANIMS;
 
 // -- args ------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -1260,22 +1261,54 @@ async function run(audioPath, lrcPath) {
   props.sizeVar = Number.isFinite(sizeVarRaw)
     ? Math.min(Math.max(sizeVarRaw, 0), 0.45)
     : 0.15;   // absent -> NaN -> the DOCUMENTED default, not 0 (gotcha 28)
+
+  // --size-drift: a second, SLOWER size axis.
+  //
+  // --size-var varies each word statically, and that is all the eye learns from
+  // after two lines: bigger word, smaller word, repeat. What makes a line look
+  // performed rather than typeset is the size CHANGING -- a word growing as it
+  // is sung and settling back, so the size itself carries the rhythm.
+  //
+  // This is a TRANSFORM on the whole word, never fontSize per letter, so the
+  // shirorekha is untouched: every letter in the word scales together (the same
+  // reasoning that lets the word layer scale freely and stops the letter layer
+  // doing so).
+  //
+  // It also must not push a word past the frame edge, so the amplitude is
+  // bounded hard and folded into the existing --size-var clamp.
+  const driftRaw = numFlag("--size-drift");
+  props.sizeDrift = Number.isFinite(driftRaw)
+    ? Math.min(Math.max(driftRaw, 0), 0.35)
+    : 0;      // absent -> 0: an OFF-by-default feature, like --motion (gotcha 30)
+  if (props.sizeDrift > 0 && SIZE_MODE === "off") {
+    console.warn(
+      "  note: --size-drift needs per-word spans, so it is doing nothing with\n" +
+      "        --size-mode off. Use --size-mode word (or phrase)."
+    );
+  }
   // Word-by-word animation. Each word is scheduled across the cue's span by
   // character count (src/word-timing.js) and animates as it arrives, while
   // still keeping the line's own entrance/exit. "off" keeps whole-line
   // animation, which is the previous behaviour.
   const WORD_ANIM = flag("--word-anim") || "off";
-  if (!["off", "reveal", "karaoke", "pulse"].includes(WORD_ANIM)) {
-    console.error('  Unknown --word-anim "' + WORD_ANIM + '". Use off, reveal, karaoke or pulse.');
+  // Validate against the REAL pool, not a copy of it. The list used to be
+  // hardcoded here, so every effect added to WORD_ANIMS was rejected by this
+  // check before it could ever render -- the pool grew and the gate silently
+  // became a wall. scripts/check_animation.mjs reads the same source of truth,
+  // so the two cannot disagree.
+  if (!WORD_ANIM_LIST.includes(WORD_ANIM)) {
+    console.error('  Unknown --word-anim "' + WORD_ANIM + '". Use: ' + WORD_ANIM_LIST.join(", "));
     process.exit(1);
   }
   props.wordAnim = WORD_ANIM;
   // Per-letter layer, nested inside each word span. Animation is safe at any
-  // strength; per-letter SIZE is clamped hard (0.12) because Devanagari's
-  // shirorekha runs continuously across a word and bigger steps snap it in two.
+  // strength, EXCEPT that it may not scale: a per-letter scale steps the
+  // shirorekha, which is the damage per-letter SIZE does by another road
+  // (gotcha 8). Per-letter SIZE itself is clamped to 0.03, twice: here and in
+  // LETTER_SIZE_CAP. A comment here used to say 0.12.
   const LETTER_ANIM = flag("--letter-anim") || "off";
-  if (!["off", "fade", "rise", "pop", "wipe"].includes(LETTER_ANIM)) {
-    console.error('  Unknown --letter-anim "' + LETTER_ANIM + '". Use off, fade, rise, pop or wipe.');
+  if (!LETTER_ANIM_LIST.includes(LETTER_ANIM)) {
+    console.error('  Unknown --letter-anim "' + LETTER_ANIM + '". Use: ' + LETTER_ANIM_LIST.join(", "));
     process.exit(1);
   }
   props.letterAnim = LETTER_ANIM;

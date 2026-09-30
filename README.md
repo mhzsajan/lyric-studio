@@ -110,11 +110,15 @@ All the inherited verification scripts came along: `check_output.py`,
 
 | | |
 |---|---|
-| [`AGENTS.md`](AGENTS.md) | orientation + the 29 gotchas (26 inherited, 3 found by running this) + the new layer. **Read before changing anything.** |
-| [`docs/PIPELINE.md`](docs/PIPELINE.md) | what each stage proves, and what it cannot |
+| [`AGENTS.md`](AGENTS.md) | **start here.** The three rules, the commands, the repo map |
+| [`docs/PIPELINE.md`](docs/PIPELINE.md) | the pipeline stage by stage: what each proves, what can refuse, what it cannot |
+| [`docs/ANIMATION.md`](docs/ANIMATION.md) | every motion layer, every value, and the two rules motion must obey |
+| [`docs/GOTCHAS.md`](docs/GOTCHAS.md) | all 37 mistakes this repo has made, numbered, with an index |
 | [`styles/house.md`](styles/house.md) | the Look contract |
+| [`docs/MOTIONS.md`](docs/MOTIONS.md) | motion recipes, the five-font work, parallel-render limits |
 | [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | why Remotion; what made rendering fast |
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | measurements of the target video |
+| [`docs/GPU.md`](docs/GPU.md) | why the GPU is idle, measured |
 | [`docs/FONTS.md`](docs/FONTS.md) | render-time font notes (authority: the font repo) |
 | [`docs/FONTS-VERIFIED.md`](docs/FONTS-VERIFIED.md) | **the song-tested font list — recommend only from here** (11 proven fonts; 34 proven failures) |
 | [font repo README](https://github.com/mhzsajan/nepali-legacy-fonts) | the 214-font catalogue, tiers, layouts, `check_song.py` |

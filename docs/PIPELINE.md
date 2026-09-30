@@ -1,73 +1,140 @@
-# Pipeline
+# PIPELINE.md — the contract
 
-`make_video.mjs` is three steps, and the order is the point: each step can
-stop the pipeline before the next one burns time on a doomed render.
+What `node scripts/make_video.mjs` does, what each stage can refuse, and what
+each failure means. This is the file to read when deciding whether a change is
+safe.
 
 ```
-make_video.mjs <audio> <lrc> [--styled] [render flags...]
+make_video.mjs
    |
-   +-- 1/3  beats      detect_beats.py  -> out/beats-<song>.json
-   |                     failure = warn and continue (an enhancement, not a gate)
+   +-- 1. detect_beats.py     optional; a grid it cannot vouch for is NOT used
    |
-   +-- 2/3  render     render.mjs, with the FONT GATE inside it
-   |                     gate failure = HARD STOP, nothing encoded
-   |                     - LyricOverlay  (default) keyable overlay
-   |                     - LyricStyled   (--styled) full-frame video
+   +-- 2. render.mjs          font gate -> encode -> Remotion -> mp4
+   |        |
+   |        +-- lrc_legacy.py      Unicode -> Preeti keys, per word, verified
+   |        +-- widthTableFor()    measured auto-fit, per font
    |
-   +-- 3/3  critique   critique.py verifies the rendered FILE
-                         failure = file exists, exit 1, "do not ship as-is"
+   +-- 3. critique.py         samples the file: streams, duration, text, plate
+   |
+   +-- 4. scan_visibility.py  EVERY frame against each cue's [start, end]
+   |
+   exit 0 only if 2, 3 and 4 all pass
 ```
 
-`make_video` exits 0 **only** when the render succeeded AND the critique
-passed. That is the whole design: the exit code is a claim about the video, not
-about a process.
+## Stage 1 — beats (optional, and it declines)
 
-## What each stage can and cannot prove
+`--no-beats` skips it. Otherwise `detect_beats.py` estimates tempo and writes a
+confidence.
 
-| | proves | cannot prove |
+**A low-confidence grid is refused, not applied.** Measured on Allare: the
+detector reported 123.05 when the true tempo is 120 — a 2.5% error that
+accumulates to ~10 s of drift over 7 minutes, and its confidence did not
+discriminate between forced 120/123/60. So the detector marks such a grid
+`usable: false` and `make_video.mjs` does not pass it on. Snapping words to a
+grid that is not the song's tempo pulls them *away* from the hand-tapped `.lrc`,
+which is worse than the even distribution. **Gotcha 30.**
+
+`--bpm <tempo>` is how you override it, for a song whose tempo you know.
+
+## Stage 2 — render
+
+`render.mjs` parses flags, runs the checks below, writes
+`src/lyrics.generated.js` + `public/`, and shells out to the Remotion CLI.
+
+### What can refuse to render
+
+| condition | what happens | why |
 |---|---|---|
-| `font_gate.py` | the font can write every Devanagari character of the song | that the transcode is right (`diag_encode.py` and the render log's round-trip warning cover that) |
-| `detect_beats.py` | a tempo and a beat grid, and its own confidence | that words are *sung* on those beats — hence `--beat-tol` quantizes around the tapped `.lrc` rather than retiming |
-| `critique.py` | text present at sampled cues, plate purity, no edge-clip, streams, duration | **glyph identity** (द vs ध) — pixel statistics cannot; use `--prepare-only`'s still |
+| **no `.ends.txt` and none can be found** | **hard stop, exit 1** | an estimated end is the *next line's start*, so a line sung before an instrumental stays up for the whole gap. A fallback that produces a plausible wrong deliverable is a failure, not a convenience (gotcha 19, closed properly late) |
+| font gate rejects the font | exit 1 | a legacy `.ttf` with 0 Devanagari codepoints, or a layout that cannot write this song |
+| no Python and `--legacy-font` | exit 1 with an explanation | the transcoder is Python, by design |
+| `--motion <unknown>` | exit 1 | "you asked for motion and got none", silently, is the gotcha-31 shape |
+| `--frames N` | **ignored** | it renders the whole composition. Use `npx remotion still` for one frame |
 
-The row that matters is the last one. Every failure this project ever shipped
-passed every automated check that existed at the time, because the checks
-looked at the container, the timing, and the pixels *behind* the text.
+### What the report prints (and what it does not promise)
 
-## Why the gate is inside render.mjs and not in make_video
+The cue report shows cue count, the last end, where each end came from
+(`timed` / `timed-clamped` / `estimated`), the mix plan and the width model.
 
-Because `render.mjs` is also the standalone entry point (`npm run render`, the
-long one-line production commands in AGENTS.md). A gate that only exists in the
-orchestrator protects exactly the one path people use least — and the failure it
-prevents has shipped three times.
+**`timed-clamped` means** the tapped end ran past the next line's start — the
+singer's tail — so it was trimmed to the next line. 10 of Allare's 109 cues are
+like this. It is not a failure and it is not a guess; it is the tapped data.
 
-## The font gate in detail
+**The report is not a delivery.** It reports on *render.mjs's* parse. The video
+renders from the composition's parse, and for a long time those were two
+different parses — the report said `109/109 timed` while every cue in the video
+used an estimated end. `scripts/check_ends_wire.mjs` exists to keep them
+identical, and it is the check that would have caught it (gotcha 31).
 
-```
---font-file <ttf>   -> fontTools: every Devanagari codepoint in the .lrc must be
-                       in the font's cmap. Zero Devanagari codepoints = the file
-                       is a legacy ASCII-mapped font -> hard fail.
---font-slug <slug>  -> font repo's check_song.py (the authority; not vendored).
---layout <json>     -> same, for the hand-wired legacy path.
---skip-font-gate    -> renders anyway. You are the gate now.
-```
+## Stage 3 — critique (samples)
 
-Measured on the test song: AMS Manthan (`--font-slug`) fails on 21 of 13 cues'
-words — `U+094D` virama ×23, `U+0901` candrabindu ×14 — in **seconds**, with
-the Tier A alternatives printed. Without the gate that is a four-minute render
-of `फर्केर` as `फरकर` (a different word) that passes every output check.
+`critique.py` checks the **finished file**, not the renderer's intentions:
 
-## The overlays on the house style
+- `streams` — exactly one video, zero audio when `--no-audio`
+- `duration` — equals the audio length to within tolerance
+- `text-present` — sampled cue frames actually carry text
+- `black-plate` — corners are pure `#000000`, so Add/Screen keys cleanly
+- `no-edge-clip` — no ink in the outer 2% of the frame
 
-`--styled` applies house defaults (title cards, `mix` placement, karaoke words,
-letter pop at the 0.03 shirorekha cap, size 128, white halo). **Every one
-yields to an explicit flag.** They are defaults, not overrides — check
-`styles/house.md` for the rules and the banned-generic list.
+Presence is sampled **inside each cue's own `[start, end]`** (it needs `--ends`,
+which `make_video` resolves and passes). Sampling used to measure from the
+*next* line's start, which on short cues landed in the silent gap after the line
+had ended — so it reported "no lit text" on a correct render and passed a broken
+one. It was only ever right by accident (gotcha 32).
 
-## Passing flags through
+## Stage 4 — every frame, no sampling
 
-`make_video` consumes only `--no-beats`, `--skip-critique`, `--bpm`. Everything
-else — including `--styled`, `--font-file`, `--font-slug`, `--mode`, `--size`,
-`--mode`, `--length`, `--no-audio`, `--preview`, `--out` — goes to
-`render.mjs` untouched. It also pins `--out` so step 3 critiques the exact file
-step 2 wrote.
+`scan_visibility.py` decodes **every frame**, groups the frames with ink into
+intervals, and compares them to the cue windows. Any ink outside
+`[start, end]` fails the run.
+
+This is a separate gate because it answers a different question from critique.
+Sampling cannot answer *"does this word EVER appear too late"* — and the person
+watching the file asked exactly that after every sampled check said 0/109.
+
+Its threshold is **12/255**, far lower than critique's 40, because this is an
+overlay: a line at 15% opacity is invisible on black alone and plainly visible
+over a camera feed. `lingering.py`'s blind spots were a 150 ms sampling floor and
+a 40/255 threshold (gotcha 31, closed).
+
+**This detector was validated against a deliberately broken build**
+(`scripts/_break_ends.mjs`): it reports 86 intervals outside the windows and
++7.1 s of overshoot on a render built without ends, and clean on a correct one.
+A detector that never fails is not a detector.
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | rendered **and** verified |
+| 1 | stopped. Read the message — every failure here names the file and what to do |
+
+## The flags that matter most
+
+| flag | default | note |
+|---|---|---|
+| `--length <s>` | — | **required for `--no-audio`.** Without it the video ends where the last lyric ends, which is an estimate (gotcha 14) |
+| `--no-audio` | off | text-only overlay; no audio stream in the container |
+| `--motion <level>` | `off` | off by default *deliberately* — motion displaces text (gotcha 33) |
+| `--font-file` / `--font-slug` / `--legacy-font` | — | risk order in [FONTS-VERIFIED.md](FONTS-VERIFIED.md). Prefer `--font-file` |
+| `--beats <file>` / `--no-beats` / `--bpm <n>` | beats on | an untrusted grid is refused automatically |
+| `--skip-critique` / `--skip-scan` | off | independent: critique is "is the file well-formed", the scan is "is any lyric outside its window" |
+| `--preview` | off | quarter-size look check. **Not the deliverable** |
+
+## Ordering rules this machine forces
+
+- Renders **share `src/lyrics.generated.js`**. Two at once in one tree and the
+  last-prepared font wins — silently, as identical stills. Queue them, or use
+  `git worktree add --detach` clones sharing a `node_modules` junction.
+- **Five concurrent renders OOM-crash Chrome** on this box (exit 1, logs ending
+  in a CDP stack, around 40% through). Two at a time is safe.
+- The GPU is not usable for encoding: Remotion's bundled ffmpeg has no
+  `h264_vaapi`/`h264_amf`. `--gpu` **fails the render here** and `--gl=angle` is
+  *slower* than software. Measured in [GPU.md](GPU.md). Do not reach for it.
+
+## What still needs a human
+
+1. **Glyph identity.** `द` vs `ध` is one stroke. The font gate proves the font
+   *has* the characters; nothing proves it draws the *right* one. Read a still.
+2. **Whether it looks good.** "Proven working" means it renders correct text —
+   not that you like it. Both are worth checking; only one is automatable.

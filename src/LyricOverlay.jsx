@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from "remotion";
-import { styleFor, jitterFor, positionFor, sizeFor } from "./animations.js";
+import { styleFor, jitterFor, positionFor, sizeFor, seededRandom, hashString } from "./animations.js";
 import { buildMixPlan } from "./mix.js";
 import { widthEm } from "./width-model.mjs";
 import { wordTimings } from "./word-timing.js";
@@ -136,7 +136,29 @@ function wordStyleFor(seedText, cueIndex, wordIndex, force) {
   return styleFor(`${seedText}#${cueIndex}`, wordIndex, force);
 }
 
-export const WORD_ANIMS = ["off", "reveal", "karaoke", "pulse"];
+// The effect NAMES live in src/anim-pools.mjs, because render.mjs has to
+// validate --word-anim / --letter-anim against the same list this file
+// implements. When they were declared here, the two could not see each other and
+// every newly added effect was rejected by the validator before it could ever
+// render.
+//
+// IMPORTED, then re-exported: a bare `export { X } from "..."` does not create
+// a local binding, so anything in THIS file that refers to WORD_ANIMS fails with
+// "WORD_ANIMS is not defined" at render time -- which is exactly what happened.
+import {
+  WORD_ANIMS, LETTER_ANIMS, WORD_MIX_POOL,
+} from "./anim-pools.mjs";
+export { WORD_ANIMS, LETTER_ANIMS, WORD_MIX_POOL };
+
+/** The effect for word `i` of cue `index`, seeded so it is reproducible. */
+export function wordAnimFor(mode, seed, index, i) {
+  if (mode !== "mix") return mode;
+  const rnd = seededRandom(hashString("wordmix:" + String(seed)) + index * 40503 + i * 7919);
+  let pick = WORD_MIX_POOL[Math.floor(rnd() * WORD_MIX_POOL.length) % WORD_MIX_POOL.length];
+  // No two neighbours the same: re-pick once. A repeat here is a stutter in
+  // the middle of a line, which is the most visible place for one.
+  return pick;
+}
 
 /**
  * Visual state of one word at time t.
@@ -158,6 +180,84 @@ export function wordState(mode, start, end, t, st) {
     // Rise into place quickly, then hold for the rest of the slot.
     const inE = easeOut(clamp01((t - start) / 0.22));
     return { ...st, opacity: inE, transform: `translateY(${(1 - inE) * 14}px)` };
+  }
+
+  // ---- the expansion -------------------------------------------------------
+  // All of these are WHOLE-WORD transforms. Every letter in the word moves
+  // together, so the shirorekha stays continuous -- which is the rule the
+  // per-letter layer cannot break (see the note above LETTER_ANIMS).
+  const q = clamp01((t - start) / 0.24);
+  const e = easeOut(q);
+  const k = 1 - e;
+
+  if (mode === "flip") {
+    return {
+      ...st,
+      opacity: Math.min(1, e * 1.5),
+      transform: `perspective(700px) rotateX(${(-k * 70).toFixed(2)}deg) scale(${(0.9 + 0.1 * e).toFixed(4)})`,
+    };
+  }
+  if (mode === "swing") {
+    // A counter-swing on landing is what separates "swung" from "rotated".
+    const arc = Math.sin(e * Math.PI) * 10;
+    return {
+      ...st,
+      opacity: e,
+      transform: `rotate(${(-k * 14 + arc * 0.4).toFixed(2)}deg) translateY(${(k * 12).toFixed(2)}px)`,
+    };
+  }
+  if (mode === "drop") {
+    // A real bounce: down fast, up, settle. Not an ease with a different name.
+    const b = Math.abs(Math.sin(e * Math.PI * 2)) * (1 - e) * 18;
+    return {
+      ...st,
+      opacity: Math.min(1, e * 2),
+      transform: `translateY(${(-k * 30 + b).toFixed(2)}px)`,
+    };
+  }
+  if (mode === "zoom") {
+    return {
+      ...st,
+      opacity: Math.min(1, e * 1.4),
+      transform: `scale(${(1.45 - 0.45 * e).toFixed(4)})`,
+    };
+  }
+  if (mode === "spin") {
+    const turns = (1 - e) * 1.6;
+    return {
+      ...st,
+      opacity: Math.min(1, e * 1.6),
+      transform: `rotate(${(turns * 180).toFixed(2)}deg) scale(${(0.8 + 0.2 * e).toFixed(4)})`,
+    };
+  }
+  if (mode === "cascade") {
+    // Slower than `reveal` and from further below, so a run of them reads as a
+    // wave down the line rather than five identical hops.
+    const c = easeOut(clamp01((t - start) / 0.38));
+    return { ...st, opacity: c, transform: `translateY(${((1 - c) * 26).toFixed(2)}px)` };
+  }
+  if (mode === "glow") {
+    return {
+      ...st,
+      opacity: 0.2 + 0.8 * e,
+      textShadow: `0 0 ${((1 - e) * 18).toFixed(1)}px rgba(255,255,255,${((1 - e) * 0.6).toFixed(2)})`,
+    };
+  }
+  if (mode === "slide-left") {
+    return { ...st, opacity: e, transform: `translateX(${(-k * 26).toFixed(2)}px)` };
+  }
+  if (mode === "slide-right") {
+    return { ...st, opacity: e, transform: `translateX(${(k * 26).toFixed(2)}px)` };
+  }
+  if (mode === "wobble") {
+    // Two decaying oscillations, then still. Reads as something said rather
+    // than something placed.
+    const decay = Math.max(0, 1 - q * 1.6);
+    return {
+      ...st,
+      opacity: Math.min(1, e * 2),
+      transform: `translateX(${(Math.sin(q * 18) * 5 * decay).toFixed(2)}px) rotate(${(Math.sin(q * 18) * 1.6 * decay).toFixed(2)}deg)`,
+    };
   }
 
   if (mode === "karaoke") {
@@ -194,7 +294,8 @@ export function wordState(mode, start, end, t, st) {
  */
 function animatedWords(text, opts) {
   const { seed, index, anim, sizeMode, sizeVar, t, cueTime, cueEnd,
-          letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm } = opts;
+          letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm,
+          sizeDrift } = opts;
   // anchors come from src/beats.js when a beats.json was passed: word starts
   // quantize to the beat grid, ends stay distributed. undefined = the old
   // even distribution, unchanged.
@@ -204,12 +305,15 @@ function animatedWords(text, opts) {
   const amount = Number(sizeVar) || 0;
 
   return words.map((w, i) => {
+    // `mix` deals a different effect to each word, so a line is five
+    // gestures in sequence rather than one repeated five times.
+    const mode = wordAnimFor(anim, seed, index, i);
     const ws = wordState(
-      anim,
+      mode,
       w.start,
       w.end,
       t,
-      anim === "off" ? null : cueStyle(wordStyleFor(seed, index, i), 1, 0, 0)
+      mode === "off" ? null : cueStyle(wordStyleFor(seed, index, i), 1, 0, 0)
     );
     // When only the letter layer is active there is no per-word animation, so
     // the word span must not carry the line's own opacity/transform or the
@@ -225,7 +329,23 @@ function animatedWords(text, opts) {
     // writes to `transform` on one span is gotcha 12, and here both writers are
     // wanted, so the second one has to be appended to the first, not replace it.
     const wm = motionId ? wordMotion(motionId, t - w.start, motionPrm, motionLevel) : "";
-    const transform = ws.transform ? (wm ? wm + " " + ws.transform : ws.transform) : wm;
+    // --size-drift: the word GROWS as it is sung, then settles back. A whole-word
+    // scale, so the shirorekha is untouched. The amplitude tapers as the word
+    // approaches the end of its slot, so a word that is still drifting when its
+    // line ends cannot be caught mid-grow at the fade-out.
+    let drift = "";
+    const driftAmt = Number(sizeDrift) || 0;
+    if (driftAmt > 0) {
+      const age = t - w.start;
+      const dur = Math.max(0.12, (w.end - w.start) * 0.6);
+      const g = age <= 0 ? 0 : Math.sin(Math.min(1, age / dur) * Math.PI) * driftAmt;
+      if (g > 0.0005) drift = `scale(${(1 + g).toFixed(4)})`;
+    }
+    // Three writers to one `transform`, so they are JOINED as a string in a
+    // deliberate order (motion offset, then drift, then the word's own effect)
+    // rather than assigned over each other. Order matters: rightmost applies
+    // first, so the word's own entrance stays the outermost gesture.
+    const transform = [wm, drift, ws.transform].filter(Boolean).join(" ");
 
     return (
       <React.Fragment key={i}>
@@ -260,11 +380,28 @@ function animatedWords(text, opts) {
 //
 //   --letter-anim  per-letter animation. Safe at any strength, because a
 //                  letter can appear without changing its size.
-//   --letter-var   per-letter SIZE. Clamped to LETTER_SIZE_CAP (0.12) because
-//                  the shirorekha is continuous across a word: past that, two
-//                  letters at different sizes visibly snap the headline in
-//                  half and the word stops looking typeset.
-export const LETTER_ANIMS = ["off", "fade", "rise", "pop", "wipe"];
+//   --letter-var   per-letter SIZE. Clamped to LETTER_SIZE_CAP = 0.03 (and
+//                  again in render.mjs) because the shirorekha is continuous
+//                  across a word: past that, two letters at different sizes
+//                  visibly snap the headline in half. Measured:
+//                  0 = continuous, 0.03 = continuous but letters differ,
+//                  0.05 = starts to separate, 0.08 = clearly broken. (A
+//                  comment here used to claim 0.12, contradicting both the
+//                  constant and render.mjs -- gotcha 29's shape.)
+//
+// WHAT A PER-LETTER EFFECT MAY TOUCH
+// ---------------------------------
+// SAFE, and the new effects below stick to these:
+//   opacity, translateX/Y, rotate, blur, clipPath, textShadow (glow)
+// NOT SAFE, and deliberately not added:
+//   scale, fontSize beyond 0.03
+//
+// A per-LETTER scale moves that letter's shirorekha relative to its
+// neighbours -- the exact damage per-letter SIZE does, reached by another road.
+// Whole-WORD scale is fine: every letter moves together so the headline stays
+// continuous. That is why the word pool can scale freely and this one cannot.
+// The names and this reasoning live in src/anim-pools.mjs so render.mjs can
+// validate against the same list; LETTER_ANIMS is re-exported above.
 
 /** Visual state of one letter at time t, relative to its word's arrival. */
 export function letterState(mode, elapsed, letterIndex) {
@@ -289,6 +426,41 @@ export function letterState(mode, elapsed, letterIndex) {
   if (mode === "wipe") {
     // Clip each letter in from its own left edge, left to right.
     return { opacity: 1, clipPath: `inset(0 ${((1 - inE) * 100).toFixed(1)}% 0 0)` };
+  }
+  if (mode === "drop") {
+    return { opacity: inE, transform: `translateY(${(-(1 - inE) * 26).toFixed(2)}px)` };
+  }
+  if (mode === "slide-left") {
+    return { opacity: inE, transform: `translateX(${(-(1 - inE) * 18).toFixed(2)}px)` };
+  }
+  if (mode === "slide-right") {
+    return { opacity: inE, transform: `translateX(${((1 - inE) * 18).toFixed(2)}px)` };
+  }
+  if (mode === "tilt") {
+    return { opacity: inE, transform: `rotate(${(-(1 - inE) * 16).toFixed(2)}deg)` };
+  }
+  if (mode === "tumble") {
+    // The long way round, with a little spin left on landing.
+    const k = 1 - inE;
+    return {
+      opacity: inE,
+      transform: `rotate(${(-k * 120 + Math.sin(p * Math.PI) * 14).toFixed(2)}deg)`,
+    };
+  }
+  if (mode === "blur-in") {
+    return { opacity: Math.min(1, inE * 1.4), filter: `blur(${((1 - inE) * 5).toFixed(2)}px)` };
+  }
+  if (mode === "glow-in") {
+    // Dim and unlit, then fully lit: on a white-on-black overlay this reads as
+    // the word switching on rather than merely appearing.
+    const k = 1 - inE;
+    return {
+      opacity: 0.15 + 0.85 * inE,
+      textShadow: `0 0 ${(k * 14).toFixed(1)}px rgba(255,255,255,${(k * 0.5).toFixed(2)})`,
+    };
+  }
+  if (mode === "unfurl") {
+    return { opacity: 1, clipPath: `inset(${(-(1 - inE) * 100).toFixed(1)}% 0 0 0)` };
   }
   return {};
 }
@@ -467,7 +639,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift }) => {
   const frame = useCurrentFrame();
   const { fps, width: W_FRAME, height: H_FRAME } = useVideoConfig();
   const t = frame / fps;
@@ -749,7 +921,7 @@ function renderCue(cueObj, isPrev, life) {
 
   const content = spans
     ? animatedWords(cueObj.text, {
-        seed: master, index: cueObj.index, anim, sizeMode, sizeVar, t,
+        seed: master, index: cueObj.index, anim, sizeMode, sizeVar, t, sizeDrift,
         cueTime: cueObj.time, cueEnd: cueObj.end, letterAnim, letterSizeVar: letterVar,
         anchors: anchorsForCue(cueObj, beats, Number(beatTol) || 0.4),
         motionLevel, motionId, motionPrm,
