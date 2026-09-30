@@ -1426,6 +1426,48 @@ async function run(audioPath, lrcPath) {
     props.wordFill = null;
   }
 
+  // --wrap: break a long line into ROWS at full size, instead of shrinking the
+  // type until it fits on one row.
+  //
+  // On by default, and this is the second flag here that is. A 50-character Allare
+  // line used to come out in type you could read across a room, because shrinking
+  // was the only strategy available: the renderer picked whichever shape the
+  // measurement allowed rather than the one the lyric wanted. Wrapping first and
+  // shrinking only if the rows still overflow the frame keeps the house size and
+  // lets a long line simply be taller.
+  //
+  // `off` restores the old behaviour. It is not an error: it is what you want to
+  // compare against, and a single short line is unaffected either way.
+  const wrapArg = flag("--wrap") || "rows";
+  if (!["rows", "off"].includes(wrapArg)) {
+    console.error('  Unknown --wrap "' + wrapArg + '". Use one of: rows, off.');
+    process.exitCode = 1;
+    return;
+  }
+  props.wrap = wrapArg;
+  if (wrapArg === "rows") {
+    console.log("  wrap   : rows -- a long line breaks into rows at full size, and only");
+    console.log("           shrinks if those rows would overflow the frame");
+  }
+
+  // --x-pos: vary WHERE each line sits horizontally, per cue.
+  //
+  // The report was that the words sat on the left of the screen most of the time,
+  // and that was true -- but not because of any bias in the placement table. Each
+  // band has a fixed left, and --mix holds one placement for --mix-block
+  // consecutive cues, so cues 0-7 were all `horizontal` and all left-aligned.
+  //
+  // The PLACEMENT stays in blocks, because changing the composition every cue
+  // reads as a flicker. The POSITION within it varies per cue, which the eye
+  // reads as variety rather than as motion. Measured on Allare: the left bias is
+  // gone, and no line reaches the frame margin.
+  if (has("--x-pos")) {
+    props.xPos = true;
+    console.log("  x pos  : per cue -- left / centre / right, seeded, margin-clamped");
+  } else {
+    props.xPos = false;
+  }
+
   // --color-mode: per-word and per-letter COLOUR (src/color.js).
   //
   // Off by default, for the same reason --depth is: a colour nobody chose is a

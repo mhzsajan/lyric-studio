@@ -3,6 +3,7 @@ import { AbsoluteFill, Audio, staticFile, useCurrentFrame, useVideoConfig, delay
 import { styleFor, jitterFor, positionFor, sizeFor, seededRandom, hashString } from "./animations.js";
 import { buildMixPlan } from "./mix.js";
 import { widthEm } from "./width-model.mjs";
+import { wrapRows, rowStarts } from "./wrap.js";
 import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
@@ -336,7 +337,7 @@ function animatedWords(text, opts) {
           sizeDrift, depthLevel = "off", amplitude = null,
           colorMode = "off", colorHue = 210, colorScheme = "analogous", accent = 1,
           cut = "off", type = "off", stroke = 0, strokeColor = "#000000",
-          baseSize = 105, wordFill } = opts;
+          baseSize = 105, wordFill, breakAfter = new Set() } = opts;
 
   // The cue's own span and start, needed by the composition layers. A cue's
   // span is the budget every layer has to finish inside -- the same budget
@@ -374,6 +375,15 @@ function animatedWords(text, opts) {
   }
 
   return words.map((w, i) => {
+    // --wrap: a row boundary, emitted BEFORE the word that starts the next row.
+    //
+    // A <br/> rather than a block-level wrapper because the word spans are
+    // inline and already carry per-word transforms; making each row its own block
+    // would change what the line's own transform applies to and how the tracks
+    // sit against each other. A break is the smallest thing that expresses
+    // "this row ends here" and it cannot disturb the shirorekha, because it only
+    // ever falls BETWEEN two words.
+    const brk = breakAfter.has(i - 1) ? <br key={"br" + i} /> : null;
     // `mix` deals a different effect to each word, so a line is five
     // gestures in sequence rather than one repeated five times.
     const mode = wordAnimFor(anim, seed, index, i);
@@ -517,6 +527,7 @@ function animatedWords(text, opts) {
 
     return (
       <React.Fragment key={i}>
+        {brk}
         {i > 0 ? <span style={gapStyle || undefined}>&nbsp;</span> : null}
         <span
           style={{
@@ -914,7 +925,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill, wrap, xPos }) => {
   // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
   // render.mjs produced; null when there is none, and pulseGlow falls back to a
   // slow breath rather than to nothing.
@@ -1021,6 +1032,51 @@ function geometry(place, position, W, H) {
     default:
       return { kind: "roam", align: "center", prevScale: 0.8 };
   }
+}
+
+/**
+ * Where the line sits HORIZONTALLY, when that is allowed to vary.
+ *
+ * The complaint was that the words sat on the left of the screen most of the
+ * time, and they were right -- but the cause was not the placement table above.
+ * Every band has a FIXED left, and `--mix` holds one placement for
+ * `--mix-block` consecutive cues (8 by default), so cues 0-7 were all `horizontal`
+ * and all left-aligned. Measured on Allare: 24 of 109 cues were `horizontal`, and
+ * they arrived in runs. Nothing was random; it was blocky.
+ *
+ * Two changes, and the split is deliberate:
+ *
+ *   the PLACEMENT (band width, which of the three shapes) stays in blocks. It
+ *   changes how the line is composed, and changing that every cue reads as a
+ *   flicker at Allare's 1.4s median line.
+ *
+ *   the POSITION WITHIN the placement varies per cue. Moving a block of text
+ *   three inches sideways is not a flicker -- the eye reads the same line -- but it
+ *   is immediately visible as variety, and it is what removes the persistent left
+ *   bias without touching the composition.
+ *
+ * The offsets are clamped against the frame margin AFTER the shift, because the
+ * margin is what stops a glyph touching the edge and a random offset that ignored
+ * it would put text off-screen some fraction of the time.
+ */
+function horizontalPlacement(g, seed, cueIndex) {
+  if (!xPos || g.kind === "centre") return g;
+  const rnd = seededRandom(hashString("xpos:" + seed + ":" + cueIndex));
+
+  // Three anchors rather than a continuous slide. A continuous random offset
+  // would look like the text is drifting, because consecutive cues are only
+  // ~1.4s apart and any two unrelated numbers look like motion.
+  const anchors = [0, 0.5, 1];
+  const pick = anchors[Math.floor(rnd() * anchors.length) % anchors.length];
+
+  const MARGIN = 6;      // vw, matching the frameStyle padding
+  const width = g.width ?? 60;
+  // left is the band's left edge in vw. Centring it means left = (100 - width)/2.
+  const centreLeft = (100 - width) / 2;
+  const want = centreLeft + (pick - 0.5) * (100 - width - MARGIN * 2);
+  const left = Math.min(100 - width - MARGIN, Math.max(MARGIN, want));
+
+  return { ...g, left, align: pick === 0 ? "left" : pick === 1 ? "center" : "right" };
 }
 
 /** The per-cue presentation, honouring --mode mix. */
@@ -1203,6 +1259,42 @@ const widthTable =
 // just outside it.
 const WRAP_MARGIN = 1.08;
 
+/**
+ * The size at which this line fits the band, WRAPPING FIRST and shrinking second.
+ *
+ * The old version had one strategy: shrink until the line fits on one row. It
+ * bisected the size, which is why it worked, but a 50-character Allare line came
+ * out in type you could read from across a room -- and that is the opposite of a
+ * lyric video. A line that is too long wants to be broken, not made smaller.
+ *
+ * The order matters and is the whole fix: WRAP at the house size, then shrink
+ * only if the resulting block still does not fit the height budget. Wrapping
+ * first means the common case -- a long line in a normal cue -- keeps full size
+ * and simply occupies more rows. Shrinking only happens when a line is long
+ * enough that its rows would overflow the frame, which is the case where there
+ * is no other answer.
+ *
+ * `rowsAt` is passed in rather than recomputed so the number of rows the size was
+ * chosen for is the SAME number of rows the renderer then breaks into. Computing
+ * it twice from two different sources is how a line ends up one word too wide on
+ * screen, and the width model's error is already 0.9% before anything is added.
+ */
+function fitWrapped(text, size, bandWidth, rowsAt) {
+  const budget = H_FRAME * 0.34;
+  const rowCount = rowsAt(size);
+  if (rowCount * size * 1.32 <= budget) return size;
+
+  let lo = 8;
+  let hi = size;
+  for (let i = 0; i < 18 && hi - lo > 0.5; i++) {
+    const mid = (lo + hi) / 2;
+    if (rowsAt(mid) * mid * 1.32 <= budget) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** The pre-existing shrink-to-one-row fit, kept for --wrap off. */
 const fit = (text, size, bandWidth) => {
   const bandPx = bandWidth * (W_FRAME / 100);
   const w = widthEm(text, widthTable) * WRAP_MARGIN;
@@ -1237,7 +1329,9 @@ const fit = (text, size, bandWidth) => {
  */
 function renderCue(cueObj, isPrev, life) {
   const pres = presentationAt(cueObj.index);
-  const g = geometry(pres.place, position, W_FRAME, H_FRAME);
+  const g = horizontalPlacement(
+    geometry(pres.place, position, W_FRAME, H_FRAME), master, cueObj.index
+  );
 
   const unitIsWord = pres.unit === "word";
   // Per-letter and per-word features need the word spans to exist, because the
@@ -1285,7 +1379,46 @@ function renderCue(cueObj, isPrev, life) {
   // size to scale the cut effect's lift and its torn edge, and it cannot work it
   // out from a fontSize percentage that the fit has not been applied to yet.
   const bandWidth = g.kind === "roam" ? 60 : g.width;
-  const shown = g.kind === "roam" ? size : fit(cueObj.text, size, bandWidth);
+
+  // --wrap: the line becomes ROWS at full size rather than shrinking to one row.
+  //
+  // The band is measured in em, because the size is what varies: a row that fits
+  // at 105px fits at any size proportionally, so one wrap decision per size
+  // suffices and the break points do not move as the type is fitted.
+  const wrapOn = wrap !== "off";
+  const bandEm =
+    (bandWidth * (W_FRAME / 100)) / Math.max(1, size) / WRAP_MARGIN;
+
+  const wrapAt = (px) =>
+    wrapRows(cueObj.text, widthTable, bandEm * (px / Math.max(1, size))).count;
+
+  const shown =
+    g.kind === "roam"
+      ? size
+      : wrapOn
+        ? fitWrapped(cueObj.text, size, bandWidth, wrapAt)
+        : fit(cueObj.text, size, bandWidth);
+
+  // The break points, recomputed at the size that was actually chosen. Doing it
+  // with `wrapAt(shown)` rather than the original `size` is the difference
+  // between rows that match the type on screen and rows computed for a type
+  // that was then made smaller.
+  const breakAfter = (() => {
+    if (!wrapOn || g.kind === "roam") return new Set();
+    const rows = wrapRows(
+      cueObj.text,
+      widthTable,
+      (bandEm * (shown / Math.max(1, size)))
+    ).rows;
+    // Index of the LAST word of each row except the final one.
+    const set = new Set();
+    let i = 0;
+    rows.forEach((row, r) => {
+      i += row.length;
+      if (r < rows.length - 1) set.add(i - 1);
+    });
+    return set;
+  })();
 
   // Resolved BEFORE `content`, and not merely for tidiness: the first version
   // declared these below the content block and every render died with
@@ -1330,6 +1463,12 @@ function renderCue(cueObj, isPrev, life) {
         // Remotion reports as a bare frame number with no stack and no file.
         colorScheme, cut, type, stroke, strokeColor, baseSize: shown, accent,
         wordFill,
+        // --wrap: word indices after which a row ends. The breaks are emitted
+        // INSIDE animatedWords' own output rather than by post-processing the
+        // finished array, because the array is what the per-word animation is
+        // attached to and splicing it afterwards would leave the transforms on
+        // the wrong side of the break.
+        breakAfter,
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)

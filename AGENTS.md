@@ -96,6 +96,25 @@ All of it is in **[docs/ANIMATION.md](docs/ANIMATION.md)** — every layer, ever
 value, and the two hard rules motion must obey (finish inside the cue's own end;
 never travel past the frame margin).
 
+### How a line is TYPESET, not shrunk
+
+`--wrap rows` (the default) breaks a long line into **rows at full size**. It
+used to have exactly one strategy — shrink the type until the line fitted on one
+row — so a 50-character line came out in type you could read from across a room,
+and short lines came out stacked. The renderer was picking whichever shape the
+measurement allowed instead of the one the lyric wanted.
+
+Wrapping happens **first**; shrinking only if the rows still overflow the frame.
+Rows are **balanced**, not greedy: greedy fills row one to the brim and strands
+two words on the last, which reads as a mistake rather than as composition. A
+boundary is **always a space** — see `check_wrap.mjs`.
+
+`--x-pos` varies **where** each line sits horizontally, per cue. This is separate
+from `--mode mix`, which chooses the band *shape* in blocks of `--mix-block`
+cues: changing the shape every cue reads as a flicker at ~1.4 s per line, but
+moving a settled block of text sideways reads as variety, and it is what removes
+the persistent left bias without touching the composition.
+
 ### The three sizes, and why `medium` is the default
 
 Chosen by rendering the same 130 seconds of Kali Kali at each and looking at
@@ -187,7 +206,12 @@ src/motion.js           --motion layer: 21 choreographies, frame-clocked
 src/depth.js            --depth layer: the seven COMPOSITION layers
 src/color.js            --color-mode: per-word and per-letter colour, no frame time
 src/animations.js       STYLES pool, seeded size and position
-src/word-timing.js      .lrc -> per-word times (the beat-sync seam)
+src/word-timing.js      .lrc -> per-word times (the beat-sync seam), and WORD_FILL
+src/wrap.js             --wrap: a long line -> balanced rows, never splitting a word
+scripts/probe_words.mjs  how long each word is actually ON SCREEN (the gate's blind spot)
+scripts/probe_typing.mjs  whether a letter lands before its own word or after the cue
+scripts/interval_math.mjs whether a low ink-interval count is a bug or arithmetic
+scripts/gate_case.mjs   run render.mjs on a song whose FILENAME is Nepali
 src/parse-lrc.mjs       .lrc (+ .ends.txt) -> cues {time, end, text}
 src/Root.jsx            compositions; duration and fps resolve here
 styles/house.md         the look, in prose
@@ -206,10 +230,10 @@ node scripts\check_all.mjs      # every self-contained suite. This is the comman
 node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 ```
 
-There are **22** check scripts, in three kinds. Only the first kind must be
+There are **23** check scripts, in three kinds. Only the first kind must be
 green before you commit, and `check_all.mjs` runs all of it:
 
-**1. Self-contained suites (17)** — pure functions of the source; no render, no
+**1. Self-contained suites (18)** — pure functions of the source; no render, no
 font, no audio. Seconds each, and every one has caught a real bug here.
 
 | | guards |
@@ -220,7 +244,8 @@ font, no audio. Seconds each, and every one has caught a real bug here.
 | `check_depth.mjs` | the seven composition layers; above all that the **sequenced reveal fits inside the cue's span**, the shirorekha rule, tracking as a gap and not letter-spacing, determinism |
 | `check_color.mjs` | per-word/per-letter colour: the **lightness floor** every level must clear (a dark word is invisible once Add/Screen blended over footage), a stepped hue rather than a scatter, `off` returns null, and — because a colour check that passes while the video is broken is exactly its own failure mode — the assertions are run against a deliberately broken implementation and must reject it |
 | `check_cut.mjs` | the cut-paper layer: word geometry stays finite, no per-letter rotate exceeds `LETTER_ANGLE_CAP`, and **no per-letter lift or clip exists at all** — those two cut the shirorekha irreversibly, so they are refused rather than capped. Asserts `letter` genuinely inherits `word`'s geometry |
-| `check_typing.mjs` | the typed-on reveal: **the delay chain finishes inside every cue's span**, including the pathological ones (a 40-letter line in 0.5 s). A typing reveal is nothing but letters arriving late, which is the exact shape of the lingering-lyric bug |
+| `check_typing.mjs` | the typed-on reveal: **the delay chain finishes inside every cue's span**, including the pathological ones (a 40-letter line in 0.5 s). A typing reveal is nothing but letters arriving late, which is the exact shape of the lingering-lyric bug. Also walks the **real** word layer rather than a copied model of it |
+| `check_wrap.mjs` | a long lyric line becomes **rows at full size**, not one shrunken row: balanced rather than greedy, and **never split inside a word** — Devanagari's shirorekha is continuous across a word, so a break inside one snaps the headline (gotcha 8). Runs a deliberately greedy and a deliberately word-splitting breaker and requires the assertions to reject both |
 | `check_animation.mjs` | word/letter pools, **the shirorekha rule**, size-drift bounds |
 | `check_parse.mjs` | the `.lrc` + `.ends.txt` parse |
 | `check_beats.mjs` | beat anchoring and the "untrusted grid is refused" rule |

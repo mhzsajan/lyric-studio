@@ -124,6 +124,13 @@ const BASE_DEFAULTS = {
   // end. null means WORD_FILL in word-timing.js, so there is exactly one default
   // and it lives beside the measurement that chose it.
   wordFill: null,
+  // --wrap: "rows" breaks a long line into rows at full size instead of shrinking
+  // the type until it fits one row. "off" is the old behaviour.
+  wrap: "rows",
+  // --x-pos: vary each line's horizontal placement per cue. The band shape stays
+  // in blocks; only the position within it moves, which reads as variety rather
+  // than as a flicker.
+  xPos: false,
   // Title and band, read from the .lrc's [ti:] and [ar:].
   title: parsed.title || "",
   band: parsed.band || "",
