@@ -173,3 +173,8 @@ separate `git worktree add --detach` clones sharing one `node_modules`
 junction (`mklink /J`). In one tree, renders must be sequential or the
 last-prepared font wins (stills come out byte-identical — the
 identical-stills lesson, now with its cause named).
+
+Also measured: **five concurrent renders is too many on this machine —
+Chrome page-crashes (OOM) killed all five mid-render** around the 40%
+mark, silently (exit 1, logs ending in a CDP stack). Two at a time is
+safe and barely slower in wall-clock terms; queue them.
