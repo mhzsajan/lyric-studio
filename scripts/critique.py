@@ -58,8 +58,18 @@ BRIGHT = 180   # styled: the lyric is white+halo; the background may be lit
 MARGIN = 0.02  # outer 2% of each edge
 
 
-def read_cues(path):
-    """(start_seconds, text) per lyric line, stamps and metadata removed."""
+def read_cues(path, ends_path=None):
+    """(start_seconds, text, end_seconds) per lyric line.
+
+    The end is needed because a line is on screen only for [start, end) -- the
+    window the ends file was tapped to define (gotcha 31) -- so every presence
+    sample has to land inside it. `end_seconds` is the guessed next-start when
+    there is no companion, which is the old behaviour.
+
+    NOTE the third element: read_cues used to return pairs and every caller
+    unpacked two values. The end is appended rather than derived inside the
+    checker so that one place owns "when is a line on screen".
+    """
     cues = []
     with open(path, encoding="utf-8-sig") as f:
         for raw in f:
@@ -71,9 +81,39 @@ def read_cues(path):
             if not text:
                 continue
             for m, s in stamps:
-                cues.append((int(m) * 60 + float(s.replace(":", ".")), text))
+                cues.append([int(m) * 60 + float(s.replace(":", ".")), text, None])
     cues.sort(key=lambda c: c[0])
+
+    ends = {}
+    if ends_path and os.path.exists(ends_path):
+        with open(ends_path, encoding="utf-8-sig") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw or raw.startswith("#"):
+                    continue
+                parts = [p.strip() for p in raw.split("|")]
+                if len(parts) < 2:
+                    continue
+                a = _secs(parts[0])
+                b = _secs(parts[1])
+                if a is not None and b is not None:
+                    ends[round(a, 2)] = b
+
+    for i, c in enumerate(cues):
+        nxt = cues[i + 1][0] if i + 1 < len(cues) else c[0] + 8
+        real = ends.get(round(c[0], 2))
+        # A tapped end past the next line's start is the singer's tail; the
+        # renderer clamps it, so clamp it here too or the two disagree.
+        c[2] = min(real, nxt) if real is not None and real > c[0] else min(max(c[0], nxt), c[0] + 8)
     return cues
+
+
+def _secs(t):
+    m = re.match(r"^(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?$", t.strip())
+    if not m:
+        return None
+    frac = m.group(3) or "0"
+    return int(m.group(1)) * 60 + int(m.group(2)) + int(frac) / 10 ** len(frac)
 
 
 def find_tools(explicit_ffmpeg, explicit_ffprobe):
@@ -146,6 +186,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("video")
     ap.add_argument("--lrc", required=True)
+    ap.add_argument("--ends", help="the .ends.txt companion, so presence is "
+                    "sampled inside each line's real on-screen window")
     ap.add_argument("--mode", choices=["overlay", "styled"], default="overlay")
     ap.add_argument("--expect-audio", action="store_true")
     ap.add_argument("--no-audio", action="store_true")
@@ -210,7 +252,8 @@ def main():
     else:
         results.append(("duration", duration > 0, "%.2fs (nothing to compare)" % duration))
 
-    cues = read_cues(a.lrc)
+    cues = read_cues(a.lrc, a.ends)
+    cue_ends = [c[2] for c in cues]
     if not cues:
         results.append(("cues", False, "no cues parsed from " + a.lrc))
     else:
@@ -218,15 +261,39 @@ def main():
         # Sampling is spread across the song: a head-only sample is how the
         # Ritu failure (wrong text at t=145s in a 6-minute file) survives
         # spot checks. Midpoints, not starts: the entrance animation owns the
-        # first ~0.34s of a cue and a midpoint is always settled text.
+        # first ~0.34s of a cue, so a midpoint is settled text.
+        #
+        # THE SAMPLE MUST LAND INSIDE THE CUE'S OWN SPAN. It used to be
+        #     mid = start + min(1.5, max(0.3, (nxt - start) * 0.55))
+        # which measures forward from the NEXT line's start with no idea how
+        # long this cue is, and on a short cue the 1.5 s cap lands past its own
+        # end. Four of 24 samples on Allare fell into the silent gap AFTER the
+        # line had finished and BEFORE the next one began -- where nothing is
+        # scheduled to be drawn at all -- and were reported as "no lit text".
+        #
+        # That check passed the broken file and failed the fixed one, which is
+        # the signature of a test measuring the wrong thing: it was only ever
+        # right by accident. The old renderer kept a line up to the next line's
+        # start, so the overshoot happened to land on text; once end timing
+        # actually works (gotcha 31), a blank gap is the CORRECT picture and
+        # this rule reports it as a defect.
+        #
+        # So: sample the midpoint of the cue's OWN [time, end), and count a cue
+        # with no usable interior as a skip rather than a failure.
         n = min(len(cues), max(1, a.max_samples))
         step = len(cues) / n
         samples = []
         for i in range(n):
             idx = min(len(cues) - 1, int(i * step))
-            start, text = cues[idx]
-            nxt = cues[idx + 1][0] if idx + 1 < len(cues) else min(duration, start + 4)
-            mid = start + min(1.5, max(0.3, (nxt - start) * 0.55))
+            start, text, _end = cues[idx]
+            end = cue_ends[idx]
+            span = end - start
+            if span <= 0.05:
+                continue                      # nothing scheduled on screen
+            # A hair past the midpoint, so the sample is clear of the entrance
+            # fade even on a cue only a few frames longer than the fade itself.
+            lead = min(0.34 + 0.06, span * 0.45)
+            mid = start + min(max(lead, span * 0.55), span - 0.04)
             if mid < duration - 0.05:
                 samples.append((idx, mid, text))
 
