@@ -119,9 +119,11 @@ All the inherited verification scripts came along: `check_output.py`,
 | [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | why Remotion; what made rendering fast |
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | measurements of the target video |
 | [`docs/GPU.md`](docs/GPU.md) | why the GPU is idle, measured |
-| [`docs/FONTS.md`](docs/FONTS.md) | render-time font notes (authority: the font repo) |
-| [`docs/FONTS-VERIFIED.md`](docs/FONTS-VERIFIED.md) | **the song-tested font list — recommend only from here** (11 proven fonts; 34 proven failures) |
-| [font repo README](https://github.com/mhzsajan/nepali-legacy-fonts) | the 214-font catalogue, tiers, layouts, `check_song.py` |
+| [font repo README](https://github.com/mhzsajan/nepali-legacy-fonts) | **the font authority.** `verdicts.json` is the single source of which fonts work — 4 states, `broken`/`failed` always refused — plus the catalogue, tiers and layouts |
+
+There is deliberately **no font list in this repo.** A second copy of a font
+verdict is a second thing to be wrong, and it had already drifted once before it
+moved out. Read the verdicts through `scripts/font_ref.mjs`.
 
 ## Requirements
 
