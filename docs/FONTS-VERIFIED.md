@@ -90,7 +90,8 @@ that property.
 ## Failed the same song — do not use for lyric videos
 
 All 42 preferred fonts were rendered or gate-checked on Allare (2026-09-30).
-34 failed:
+**7 of the 42 passed** (arap007, cv-haha, mkali, pawang, arya, kalam,
+rajdhani) and **35 failed**:
 
 - **29 AMS/GENERATED fonts** — gate-rejected in seconds: their layouts have
   no candrabindu `ँ` or virama `्` slots and the song needs both
