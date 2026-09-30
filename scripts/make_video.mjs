@@ -42,11 +42,16 @@ const val = (n) => {
 
 const NO_BEATS = has("--no-beats");
 const SKIP_CRITIQUE = has("--skip-critique");
+// The every-frame end-timing scan. Separate from --skip-critique on purpose:
+// critique asks "is the file well-formed", this asks "is any lyric visible
+// outside its own end time". Opting out of one is not opting out of the other,
+// and this is the check that answers the question the ends file was tapped for.
+const SKIP_SCAN = has("--skip-scan");
 const FORCE_BPM = Number(val("--bpm"));
 
 // Passthrough: drop what make_video consumes, keep everything else -- including
 // values that belong to kept flags (--out X keeps X).
-const CONSUMED = new Set(["--no-beats", "--skip-critique", "--bpm"]);
+const CONSUMED = new Set(["--no-beats", "--skip-critique", "--skip-scan", "--bpm"]);
 const passthrough = argv.filter((a, i) => {
   if (CONSUMED.has(a)) return false;
   const prev = argv[i - 1];
@@ -234,6 +239,45 @@ if (SKIP_CRITIQUE) {
       "  deciding anything. Do not ship it as-is."
     );
     process.exit(1);
+  }
+
+  // -- 3b. EVERY FRAME, not a sample ------------------------------------------
+  //
+  // critique.py samples. Sampling cannot answer "does this word EVER appear
+  // after its end", which is the question the ends file exists for and the one
+  // the user actually asked after watching the file: "it is showing up lyric
+  // word when they should have ended".
+  //
+  // scan_visibility.py decodes every frame, groups the frames with ink into
+  // intervals, and compares those against each cue's [start, end]. It is a
+  // separate gate because it catches a different class: not "is the file
+  // well-formed" but "is any lyric visible outside the window it belongs to".
+  //
+  // Its threshold is 12/255, far lower than critique's 40, because this is an
+  // OVERLAY: a line at 15% opacity is invisible on black in isolation and
+  // plainly visible over a camera feed. lingering.py's blind spots were exactly
+  // a 150ms sampling floor and a 40/255 threshold.
+  if (endsFile && !SKIP_SCAN) {
+    const scan = spawnSync(
+      py,
+      [path.join(HERE, "scan_visibility.py"), outPath, lrc, endsFile, "--lit", "12"],
+      { stdio: "inherit", cwd: ROOT }
+    );
+    if ((scan.status || 0) !== 0) {
+      console.error(
+        "\n  A lyric is visible OUTSIDE its own [start, end] window.\n" +
+        "  That is the ends file being ignored, and it is the bug this whole\n" +
+        "  pipeline exists to prevent. Do not ship this file.\n" +
+        "  Re-render with --length and check that the ends companion was found\n" +
+        "  (node scripts/check_ends_wire.mjs)."
+      );
+      process.exit(1);
+    }
+  } else if (!endsFile) {
+    console.warn(
+      "  scan_visibility: SKIPPED, no ends companion -- there is no window to\n" +
+      "        check a line against, so 'is it visible too late' cannot be asked."
+    );
   }
 }
 
