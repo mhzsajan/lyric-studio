@@ -1069,12 +1069,30 @@ function horizontalPlacement(g, seed, cueIndex) {
   const anchors = [0, 0.5, 1];
   const pick = anchors[Math.floor(rnd() * anchors.length) % anchors.length];
 
-  const MARGIN = 6;      // vw, matching the frameStyle padding
+  // THE PADDING BOX IS THE WHOLE BUG. `g.left` positions the band with
+  // `position: absolute; left: <left>vw`, and an absolutely positioned child is
+  // placed against its containing block's PADDING edge -- not the frame edge.
+  // frameStyle carries `padding: 0 8vw`, so the band's real screen position is
+  // 8vw further right than `left` says.
+  //
+  // The first version clamped against the frame, which put every randomised band
+  // 2vw off the right edge: for a 64vw band at left 30 the block ran to
+  // 8 + 30 + 64 = 102vw. AbsoluteFill sets overflow:hidden, so those 2vw were
+  // CROPPED, and with align:right the text sits against exactly that edge -- which
+  // is the "words are not fully visible" report. The old fixed left:11 was safe by
+  // luck, 19vw..83vw, and adding the padding offset here is what makes the
+  // randomised case as safe as the fixed one was.
+  const PAD = 8;
+  const MARGIN = 6;                                  // vw from the FRAME edge
   const width = g.width ?? 60;
-  // left is the band's left edge in vw. Centring it means left = (100 - width)/2.
-  const centreLeft = (100 - width) / 2;
-  const want = centreLeft + (pick - 0.5) * (100 - width - MARGIN * 2);
-  const left = Math.min(100 - width - MARGIN, Math.max(MARGIN, want));
+  const usable = 100 - PAD * 2;                      // inside the padding
+
+  // Centring, expressed in the padding box's own coordinates.
+  const centreLeft = (usable - width) / 2;
+  const want = centreLeft + (pick - 0.5) * (usable - width);
+  const leftMin = MARGIN - PAD;
+  const leftMax = 100 - MARGIN - width - PAD;
+  const left = Math.min(leftMax, Math.max(leftMin, want));
 
   return { ...g, left, align: pick === 0 ? "left" : pick === 1 ? "center" : "right" };
 }
@@ -1259,6 +1277,24 @@ const widthTable =
 // just outside it.
 const WRAP_MARGIN = 1.08;
 
+// The band is hung from a `top` percentage, and a wrapped block grows DOWNWARD
+// from there. So the space a block actually has is what is left of the frame
+// BELOW that top -- not a fraction of the whole frame.
+//
+// This was a magic `H_FRAME * 0.34`, chosen before wrapping existed and never
+// revisited, and it was wrong for every placement that is not centred. At the
+// house `top: 56%` a block has 1080 - 605 = 475px beneath it, so 0.34*1080 =
+// 367px was 108px too strict: three rows at 105px with 1.32 line-height need
+// 416px, so every three-row line was shrunk -- and the `vertical` band is 50vw,
+// which is where most three-row lines live. That is the "the fonts are so small"
+// report, and it was a placement bug wearing a sizing costume.
+const BOTTOM_SAFE = 40;   // px kept clear of the frame's bottom edge
+
+function blockBudgetPx(topPct, H) {
+  const below = H * (1 - topPct / 100);
+  return Math.max(120, below - BOTTOM_SAFE);
+}
+
 /**
  * The size at which this line fits the band, WRAPPING FIRST and shrinking second.
  *
@@ -1279,8 +1315,8 @@ const WRAP_MARGIN = 1.08;
  * it twice from two different sources is how a line ends up one word too wide on
  * screen, and the width model's error is already 0.9% before anything is added.
  */
-function fitWrapped(text, size, bandWidth, rowsAt) {
-  const budget = H_FRAME * 0.34;
+function fitWrapped(text, size, bandWidth, rowsAt, budgetPx) {
+  const budget = budgetPx;
   const rowCount = rowsAt(size);
   if (rowCount * size * 1.32 <= budget) return size;
 
@@ -1396,7 +1432,8 @@ function renderCue(cueObj, isPrev, life) {
     g.kind === "roam"
       ? size
       : wrapOn
-        ? fitWrapped(cueObj.text, size, bandWidth, wrapAt)
+        ? fitWrapped(cueObj.text, size, bandWidth, wrapAt,
+                     blockBudgetPx(g.top, H_FRAME))
         : fit(cueObj.text, size, bandWidth);
 
   // The break points, recomputed at the size that was actually chosen. Doing it

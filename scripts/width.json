@@ -1,56 +1,216 @@
 {
-  "Nirmala UI": {
-    "cons": 0.4781183050526114,
-    "matra": 0.25438359086169277,
-    "space": 0.513721442790787,
-    "other": null,
-    "fitted": [
-      "cons",
-      "matra",
-      "space"
-    ],
-    "pixelSize": 200,
-    "worstError": 0.4312811022680901,
-    "calibratedAt": "2026-09-29"
-  },
-  "Nirmala UI +song": {
-    "fitted": [
-      "cons",
-      "matra",
-      "space"
-    ],
-    "cons": 0.62873,
-    "matra": 0,
-    "space": 0.44702,
-    "other": null,
-    "pixelSize": 200,
-    "worstError": 0.019805891301447855,
-    "inSampleWorstError": 0.5796713155265812,
-    "calibratedOn": "Allare Remotion.lrc",
-    "calibratedAt": "2026-09-29"
-  },
-  "AMS Manthan": {
-    "perChar": 0.36381,
-    "model": "per-char",
-    "pixelSize": 200,
-    "worstError": 0.508365891705844,
-    "calibratedOn": "C:\\Users\\Admin\\tools\\nepali-legacy-fonts\\layouts\\ams-manthan.json",
-    "calibratedAt": "2026-09-29"
-  },
-  "Yantramanav +song": {
-    "fitted": [
-      "cons",
-      "matra",
-      "space"
-    ],
-    "cons": 0.53647,
-    "matra": 0,
-    "space": 0.58475,
-    "other": null,
-    "pixelSize": 200,
-    "worstError": 0.008579086252694965,
-    "inSampleWorstError": 0.482085521496046,
-    "calibratedOn": "Allare Remotion.lrc",
-    "calibratedAt": "2026-09-29"
-  }
+ "AMS Manthan": {
+  "calibratedAt": "2026-09-29",
+  "calibratedOn": "C:\\Users\\Admin\\tools\\nepali-legacy-fonts\\layouts\\ams-manthan.json",
+  "model": "per-char",
+  "perChar": 0.36381,
+  "pixelSize": 200,
+  "worstError": 0.508365891705844
+ },
+ "ARAP007 +song": {
+  "calibratedOn": "Jaam na Maya.remotion_start.lrc",
+  "defaultDelta": 0.465,
+  "model": "per-char",
+  "noGlyphChars": 17,
+  "perChar": 0.23235,
+  "sampleChars": 309,
+  "sampleWords": 60,
+  "unitsPerEm": 1000,
+  "worstWord": "झैँ",
+  "worstWordVsDefault": 1
+ },
+ "Arya +song": {
+  "calibratedAt": "2026-09-30",
+  "calibratedOn": "ऋतु.remotion_start.lrc",
+  "cons": 0.41727,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.30029924683988707,
+  "matra": 0.39947,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.6828,
+  "worstError": 0
+ },
+ "CV Haha +song": {
+  "calibratedOn": "Ow Amira.remotion_start.lrc",
+  "defaultDelta": 0.569,
+  "model": "per-char",
+  "noGlyphChars": 16,
+  "perChar": 0.28435,
+  "sampleChars": 603,
+  "sampleWords": 112,
+  "unitsPerEm": 1000,
+  "worstWord": "छु,",
+  "worstWordVsDefault": 1
+ },
+ "Himalayabold +song": {
+  "calibratedOn": "Ow Amira.remotion_start.lrc",
+  "defaultDelta": 0.528,
+  "model": "per-char",
+  "noGlyphChars": 16,
+  "perChar": 0.26403,
+  "sampleChars": 603,
+  "sampleWords": 112,
+  "unitsPerEm": 1000,
+  "worstWord": "छु,",
+  "worstWordVsDefault": 1
+ },
+ "Kalam +song": {
+  "calibratedAt": "2026-09-30",
+  "calibratedOn": "अल्लारे.remotion_start.lrc",
+  "cons": 0.60165,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.5486228057656649,
+  "matra": 0,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.58808,
+  "worstError": 0.032115149494106626
+ },
+ "Katmandu +song": {
+  "calibratedOn": "तिमीलाई भुलेको.remotion_start.lrc",
+  "defaultDelta": 0.417,
+  "model": "per-char",
+  "noGlyphChars": 14,
+  "perChar": 0.20833,
+  "sampleChars": 307,
+  "sampleWords": 56,
+  "unitsPerEm": 1000,
+  "worstWord": "छ...",
+  "worstWordVsDefault": 1
+ },
+ "MKali +song": {
+  "calibratedOn": "Kali Kali.remotion_start.lrc",
+  "defaultDelta": 0.468,
+  "model": "per-char",
+  "noGlyphChars": 12,
+  "perChar": 0.23398,
+  "sampleChars": 328,
+  "sampleWords": 70,
+  "unitsPerEm": 2048,
+  "worstWord": "सारै",
+  "worstWordVsDefault": 0.905
+ },
+ "Nirmala UI": {
+  "calibratedAt": "2026-09-29",
+  "cons": 0.4781183050526114,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "matra": 0.25438359086169277,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.513721442790787,
+  "worstError": 0.4312811022680901
+ },
+ "Nirmala UI +song": {
+  "calibratedAt": "2026-09-29",
+  "calibratedOn": "Allare Remotion.lrc",
+  "cons": 0.62873,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.5796713155265812,
+  "matra": 0,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.44702,
+  "worstError": 0.019805891301447855
+ },
+ "PawanG +song": {
+  "calibratedOn": "Kali Kali.remotion_start.lrc",
+  "defaultDelta": 0.486,
+  "model": "per-char",
+  "noGlyphChars": 12,
+  "perChar": 0.24279,
+  "sampleChars": 328,
+  "sampleWords": 70,
+  "unitsPerEm": 1000,
+  "worstWord": "सारै",
+  "worstWordVsDefault": 0.923
+ },
+ "Rajdhani +song": {
+  "calibratedAt": "2026-09-30",
+  "calibratedOn": "अल्लारे.remotion_start.lrc",
+  "cons": 0.46774,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.480368160509408,
+  "matra": 0,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.45677,
+  "worstError": 0.012289345366447295
+ },
+ "Shreenath +song": {
+  "calibratedOn": "तिमीलाई भुलेको.remotion_start.lrc",
+  "defaultDelta": 0.405,
+  "model": "per-char",
+  "noGlyphChars": 14,
+  "perChar": 0.20234,
+  "sampleChars": 307,
+  "sampleWords": 56,
+  "unitsPerEm": 2048,
+  "worstWord": "छ...",
+  "worstWordVsDefault": 1
+ },
+ "Shreenath Bold +song": {
+  "calibratedOn": "तिमीलाई भुलेको.remotion_start.lrc",
+  "defaultDelta": 0.405,
+  "model": "per-char",
+  "noGlyphChars": 14,
+  "perChar": 0.20234,
+  "sampleChars": 307,
+  "sampleWords": 56,
+  "unitsPerEm": 2048,
+  "worstWord": "छ...",
+  "worstWordVsDefault": 1
+ },
+ "Yantramanav +song": {
+  "calibratedAt": "2026-09-29",
+  "calibratedOn": "Allare Remotion.lrc",
+  "cons": 0.53647,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.482085521496046,
+  "matra": 0,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.58475,
+  "worstError": 0.008579086252694965
+ },
+ "Yantramanav Black +song": {
+  "calibratedAt": "2026-09-29",
+  "calibratedOn": "Allare Remotion.lrc",
+  "cons": 0.53647,
+  "fitted": [
+   "cons",
+   "matra",
+   "space"
+  ],
+  "inSampleWorstError": 0.482085521496046,
+  "matra": 0,
+  "other": null,
+  "pixelSize": 200,
+  "space": 0.58475,
+  "worstError": 0.008579086252694965
+ }
 }

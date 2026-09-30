@@ -1,4 +1,4 @@
-// render_all.mjs -- the seven songs, two videos each, every one gated.
+﻿// render_all.mjs -- the seven songs, two videos each, every one gated.
 //
 //   node scripts\render_all.mjs --dry      # print the plan and exit
 //   node scripts\render_all.mjs            # render whatever is missing
@@ -154,7 +154,7 @@ const SLOW = [
 // the font repo measured it and the gate re-proves it at render time.
 const JOBS = [
   ["01 Allare BPM 120", "Allare", "Allare.mp3",
-    "अल्लारे.remotion_start.lrc", "अल्लारे.remotion_end.lrc", 417.1, FAST, "rajdhani", "kalam"],
+    "à¤…à¤²à¥à¤²à¤¾à¤°à¥‡.remotion_start.lrc", "à¤…à¤²à¥à¤²à¤¾à¤°à¥‡.remotion_end.lrc", 417.1, FAST, "rajdhani", "kalam"],
   ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", "Jaam na Maya.mp3",
     "Jaam na Maya.remotion_start.lrc", "Jaam na Maya.remotion_end.lrc", 295.4, FAST, "arap007", "shreenath"],
   ["03 Kali Kali BPM 120", "Kali Kali", "Kali Kali.mp3",
@@ -162,9 +162,9 @@ const JOBS = [
   ["04 Ow Amira BPM 122", "Ow Amira", "Ow Amira.mp3",
     "Ow Amira.remotion_start.lrc", "Ow Amira.remotion_end.lrc", 664.5, FAST, "cvhaha", "himalaya"],
   ["05 Ritu BPM 105", "Ritu", "Ritu.mp3",
-    "ऋतु.remotion_start.lrc", "ऋतु.remotion_end.lrc", 293.4, SLOW, "arya", "yantramanav"],
+    "à¤‹à¤¤à¥.remotion_start.lrc", "à¤‹à¤¤à¥.remotion_end.lrc", 293.4, SLOW, "arya", "yantramanav"],
   ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", "Timilai Bhuleko.mp3",
-    "तिमीलाई भुलेको.remotion_start.lrc", "तिमीलाई भुलेको.remotion_end.lrc", 323.3, SLOW, "katmandu", "pawang"],
+    "à¤¤à¤¿à¤®à¥€à¤²à¤¾à¤ˆ à¤­à¥à¤²à¥‡à¤•à¥‹.remotion_start.lrc", "à¤¤à¤¿à¤®à¥€à¤²à¤¾à¤ˆ à¤­à¥à¤²à¥‡à¤•à¥‹.remotion_end.lrc", 323.3, SLOW, "katmandu", "pawang"],
   ["07 Wora Para BPM 115", "Wora Para", "Wora Para.mp3",
     "Wora Para.remotion_start.lrc", "Wora Para.remotion_end.lrc", 261.5, FAST, "rajdhani", "kalam"],
 ];
@@ -172,13 +172,51 @@ const JOBS = [
 const dry = process.argv.includes("--dry");
 const force = process.argv.includes("--force");
 
+/**
+ * SEVEN, one per song, mixing both font classes.
+ *
+ * The fourteen are two per song. These are one per song, chosen so that BOTH
+ * classes are used and so that every Preeti font here is on a song its gate
+ * actually passes -- which is not every song:
+ *
+ *   Allare, Ritu, Wora Para   UNICODE only. All three contain pre-base i-matra
+ *                             words the shared Preeti layout cannot express.
+ *   Jam Na Maya               ARAP007 only. It is one of two Preeti faces that
+ *                             cover this song; PawanG, MKali, CV Haha,
+ *                             Himalayabold and Katmandu all fail its font half
+ *                             on U+00CC.
+ *
+ * The font gate proves the rest at render time and refuses the job if it does
+ * not, so this list is a statement of intent and the gate is the authority.
+ */
+const SEVEN = [
+  ["01 Allare BPM 120", "Allare", "rajdhani"],
+  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", "arap007"],
+  ["03 Kali Kali BPM 120", "Kali Kali", "pawang"],
+  ["04 Ow Amira BPM 122", "Ow Amira", "cvhaha"],
+  ["05 Ritu BPM 105", "Ritu", "arya"],
+  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", "katmandu"],
+  ["07 Wora Para BPM 115", "Wora Para", "kalam"],
+];
+
 // Flatten to one entry per VIDEO, so the gate and the log speak in videos --
 // which is what a caller thinks in -- while the plan stays in songs.
 const work = [];
-for (const [folder, song, audio, lrc, ends, secs, treatment, f1, f2] of JOBS) {
-  work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f1, v: 1 });
-  work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f2, v: 2 });
+if (process.argv.includes("--one-per-song")) {
+  for (const [folder, song, font] of SEVEN) {
+    const job = JOBS.find((j) => j[0] === folder);
+    if (!job) { console.error("  SEVEN names a folder not in JOBS: " + folder); process.exit(2); }
+    work.push({ folder, song, audio: job[2], lrc: job[3], ends: job[4],
+                secs: job[5], treatment: job[6], font, v: 1 });
+  }
+} else {
+  for (const [folder, song, audio, lrc, ends, secs, treatment, f1, f2] of JOBS) {
+    work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f1, v: 1 });
+    work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f2, v: 2 });
+  }
 }
+
+
 
 console.log("\n  " + work.length + " videos from " + JOBS.length + " songs");
 console.log("  out: " + OUT_DIR + "\n");
