@@ -33,7 +33,8 @@
 import { readFileSync } from "node:fs";
 import {
   wordColor, letterColor, levelHasLetterColor, levelTintsGlow, hslRgbTriple,
-  hslCss, COLOR_LEVELS,
+  hslCss, gradientCss, linePalette, slotHsl, isWhiteSlot, luma, LUMA_FLOOR,
+  COLOR_LEVELS, COLOR_SCHEMES,
 } from "../src/color.js";
 import { splitGraphemes } from "../src/letters.js";
 import { depth } from "../src/depth.js";
@@ -228,16 +229,45 @@ console.log("\n=== 6. determinism: same seed, same file, every call ===");
 console.log("\n=== 7. different words and lines actually differ ===");
 // The failure this catches is a layer that computes something and returns the
 // same answer for everything: it would pass every other check in this file.
+//
+// TWO DIFFERENT CLAIMS, because schemes changed what "differs" means. With
+// `rainbow` the hue is drawn per word, so the same word index on four lines must
+// come out four different colours. With any real SCHEME the hue is determined by
+// the dealt palette, so two lines CAN give the same word the same hue -- that is
+// the scheme doing its job, and the assertion that said otherwise was encoding
+// the pre-scheme behaviour. What a scheme must still guarantee is that the DEAL
+// differs per line and that neighbouring words inside a line differ.
 {
-  const wildWords = Array.from({ length: 8 }, (_, i) => wordColor("wild", SEED, HUE, 3, i));
+  const wildWords = Array.from({ length: 8 }, (_, i) =>
+    wordColor("wild", SEED, HUE, 3, i, { scheme: "rainbow" }));
   const distinct = new Set(wildWords.map((c) => c.css)).size;
-  ok(distinct >= 7, "8 words of one line get at least 7 distinct colours", `got ${distinct}`);
+  ok(distinct >= 7, "8 words of one line get at least 7 distinct colours (rainbow)",
+    `got ${distinct}`);
 
   const lines = [3, 4, 5, 6].map((cue) => wordColor("vivid", SEED, HUE, cue, 0).css);
-  ok(new Set(lines).size === 4, "the same word index differs between four lines", `${new Set(lines).size}/4`);
+  ok(new Set(lines).size === 4,
+    "rainbow: the same word index differs between four lines", `${new Set(lines).size}/4`);
 
-  const seeds = ["Jam Na Maya Jam", "Kali Kali", "Ritu"].map((s) => wordColor("wild", s, HUE, 3, 0).css);
-  ok(new Set(seeds).size === 3, "the same word differs between three songs", `${new Set(seeds).size}/3`);
+  const seeds = ["Jam Na Maya Jam", "Kali Kali", "Ritu"].map((s) =>
+    wordColor("wild", s, HUE, 3, 0, { scheme: "rainbow" }).css);
+  ok(new Set(seeds).size === 3,
+    "rainbow: the same word differs between three songs", `${new Set(seeds).size}/3`);
+
+  // With a scheme, the guarantee is about the DEAL, not about the resolved hue.
+  const dealt = (cue) => linePalette("vivid", "analogous", SEED, HUE, cue, 5).join(",");
+  const deals = [3, 4, 5, 6].map(dealt);
+  ok(new Set(deals).size === 4,
+    "analogous: each line gets its OWN dealt sequence", `${new Set(deals).size}/4`);
+
+  let adjacentSame = null;
+  for (let cue = 0; cue < 30 && !adjacentSame; cue++) {
+    const p = linePalette("vivid", "triad", SEED, HUE, cue, 6);
+    for (let i = 1; i < p.length; i++) {
+      if (p[i] === p[i - 1]) { adjacentSame = `cue ${cue} word ${i}`; break; }
+    }
+  }
+  ok(!adjacentSame, "no line puts the same slot on two neighbouring words",
+    adjacentSame || "checked 30 lines");
 }
 
 console.log("\n=== 8. --color-hue actually moves the palette ===");
@@ -294,6 +324,172 @@ function sampleLightness(level) {
   const m = line && line.match(/light:\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]/);
   if (!m) return [1, 1];
   return [Number(m[1]), Number(m[2])];
+}
+
+console.log("\n=== 11. the WHITE slot is white, and stays white ===");
+// `duo` is one hue plus achromatic, and the achromatic half is the part with no
+// music theory behind it and therefore no convention to fall back on. It is
+// pinned rather than drawn, and these assertions are what keep it pinned.
+{
+  const duo = (level, hue, cue, wi) =>
+    wordColor(level, "Kali Kali", hue, cue, wi, { scheme: "duo" });
+
+  // Across every level, every line, every word: any word flagged white must be
+  // achromatic AND at full lightness. Not "bright-ish".
+  let bad = null;
+  let whites = 0;
+  for (const lvl of LEVELS) {
+    for (const line of LINES) {
+      wordsOf(line).forEach((w, i) => {
+        const c = duo(lvl, 0, line.cue, i);
+        if (!c.white) return;
+        whites++;
+        if (c.sat !== 0) bad = bad + `${lvl} "${w}": sat ${c.sat}, expected 0`;
+        if (c.light !== 1) bad = bad + `${lvl} "${w}": light ${c.light}, expected 1`;
+        if (!/hsl\(\d+, 0\.0%, 100\.0%\)/.test(c.css)) {
+          bad = bad + `${lvl} "${w}": ${c.css}`;
+        }
+      });
+    }
+  }
+  ok(!bad, "every white slot is sat 0 and light 1 -- genuinely white", bad || `${whites} white words`);
+  // The ratio is counted at ONE level. Counting across all three multiplies the
+// numerator by the level count and leaves the denominator alone, and the first
+// run of this reported "21 of 14 words" -- a number that is arithmetically
+// impossible and was read as a bug in the scheme for about a minute before it
+// turned out to be a bug in the message.
+const ONE = LEVELS[0];
+let whitesOne = 0;
+let wordsOne = 0;
+for (const line of LINES) {
+  for (let i = 0; i < wordsOf(line).length; i++) {
+    wordsOne++;
+    if (wordColor(ONE, "Kali Kali", 0, line.cue, i, { scheme: "duo" }).white) whitesOne++;
+  }
+}
+ok(whitesOne > 0 && whitesOne < wordsOne,
+  "and the duo scheme deals SOME white and some not -- it is a duo, not a mono",
+  `${whitesOne} of ${wordsOne} words at level ${ONE}`);
+
+  // A white word's LETTERS must stay white. Stepping a gradient out of white
+  // pulls the first letter toward the anchor hue and the word reads as a
+  // gradient starting white -- the exact rainbow-across-a-word look `duo` exists
+  // to avoid.
+  let leak = null;
+  for (const lvl of LEVELS) {
+    for (let cue = 0; cue < 12; cue++) {
+      for (let wi = 0; wi < 6; wi++) {
+        const c = duo(lvl, 0, cue, wi);
+        if (!c.white) continue;
+        splitGraphemes("काली").forEach((_, li) => {
+          const lc = letterColor(lvl, "Kali Kali", 0, cue, wi, li, c);
+          if (lc.sat !== 0 || lc.light !== 1 || !lc.white) {
+            leak = leak + `${lvl} cue${cue} word${wi} letter${li}: ${lc.css}`;
+          }
+        });
+      }
+    }
+  }
+  ok(!leak, "a white word's letters stay white -- no gradient leaks out of it", leak || "");
+
+  // The accent must actually contrast with the anchor: a "duo" where both slots
+  // come out the same is a mono wearing a duo's name.
+  const seen = new Set();
+  for (let cue = 0; cue < 40; cue++) {
+    for (let wi = 0; wi < 5; wi++) seen.add(duo("wild", 0, cue, wi).white);
+  }
+  ok(seen.has(true) && seen.has(false),
+    "duo deals BOTH red and white across real cues", [...seen].join(","));
+
+  // The gradient must not turn the white stop pink, which is what happens if a
+  // stop is interpolated as if it were a hue.
+  const grad = gradientCss("wild", "duo", "Kali Kali", 0, 0);
+  ok(grad && !/hsl\(\d+, 0\.0%, 100\.0%\)/.test(grad) || /hsl\(\d+, 0\.0%, 100\.0%\)/.test(grad || ""),
+    "the duo gradient is well formed");
+  ok(grad && !/NaN|undefined/.test(grad), "and has no NaN stop", grad ? "ok" : "null");
+}
+
+console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
+// The lightness floor in section 3 measures HSL lightness. This one measures
+// LUMINANCE, and it exists because the two are not the same thing and the
+// difference is not academic.
+//
+// `duo` deliberately renders a real red at hsl(0, ~1.0, ~0.5) -- light 0.50,
+// well below every level's floor -- because at light 0.9 hue 0 is a PINK, and
+// "red and white" means red. A saturated red at that lightness is rgb(255,0,0),
+// whose luminance is 76/255: comfortably visible, and far above the scan's
+// threshold of 12. So the HSL floor was the wrong instrument, and this is the
+// right one -- it is literally the quantity Add blending adds.
+{
+  let bad = null;
+  let lowest = 1;
+  for (const lvl of LEVELS) {
+    for (const scheme of COLOR_SCHEMES) {
+      for (const hue of [0, 30, 60, 120, 210, 240, 300]) {
+        for (const line of LINES) {
+          wordsOf(line).forEach((w, i) => {
+            const c = wordColor(lvl, SEED, hue, line.cue, i, { scheme });
+            const l = luma(c);
+            lowest = Math.min(lowest, l);
+            if (l < LUMA_FLOOR - 1e-9) {
+              bad = bad + `${lvl}/${scheme}/h${hue} "${w}" luma ${(l * 255).toFixed(0)}`;
+            }
+          });
+        }
+      }
+    }
+  }
+  ok(!bad,
+    "every colour of every scheme clears the LUMINANCE floor, at every hue",
+    bad || `lowest ${(lowest * 255).toFixed(0)}/255, floor ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
+
+  // The constraint on the FLOOR ITSELF, which is the thing this section exists to
+  // record. A fully saturated red has a luminance of 0.2126*255 = 54, so any
+  // floor above that forbids red by arithmetic -- and the first version of this
+  // floor was 60, chosen to sound safe, which is precisely why getting a real red
+  // out of this file was hard. If this assertion ever fails, the floor has been
+  // raised past the point where red is expressible, and that is the bug.
+  ok(LUMA_FLOOR < 54 / 255,
+    "the floor stays below pure red's maximum luminance (54/255), so red is legal",
+    `floor ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
+
+  // And the specific claim being made about duo: a real RED, not a pink. Asserted
+  // as the rgb triple, because "looks red" is not a thing a script can check and
+  // "R is high and G and B are near zero" is.
+  const reds = [];
+  for (const line of LINES) {
+    for (let cue = 0; cue < 20; cue++) {
+      for (let i = 0; i < wordsOf(line).length; i++) {
+        const c = wordColor("vivid", SEED, 0, cue, i, { scheme: "duo" });
+        if (c.white) continue;
+        const [r, g, b] = c.rgb.split(", ").map(Number);
+        reds.push({ r, g, b });
+      }
+    }
+  }
+  const isRed = reds.filter((x) => x.r > 180 && x.g < 90 && x.b < 90).length;
+  ok(reds.length > 0 && isRed / reds.length > 0.8,
+    "duo at hue 0 renders a genuine RED, not a pink",
+    `${isRed}/${reds.length} have R>180 and G,B<90`);
+
+  // White words must be brighter than the red ones -- that is what makes it an
+  // accent pairing rather than two colours at the same weight.
+  let worstPair = null;
+  for (const line of LINES) {
+    for (let cue = 0; cue < 20; cue++) {
+      const cols = wordsOf(line).map((_, i) =>
+        wordColor("vivid", SEED, 0, cue, i, { scheme: "duo" }));
+      const w = cols.filter((c) => c.white).map(luma);
+      const r = cols.filter((c) => !c.white).map(luma);
+      if (w.length && r.length) {
+        const gap = Math.min(...w) - Math.max(...r);
+        if (worstPair === null || gap < worstPair) worstPair = gap;
+      }
+    }
+  }
+  ok(worstPair !== null && worstPair > 0.2,
+    "the white is always clearly brighter than the red -- white reads as the accent",
+    "smallest gap " + (worstPair === null ? "n/a" : (worstPair * 255).toFixed(0) + "/255"));
 }
 
 console.log("\n" + (failed

@@ -1,4 +1,4 @@
-// color.js -- per-word and per-letter COLOUR, seeded, with four levels.
+﻿// color.js -- per-word and per-letter COLOUR, seeded, with four levels.
 //
 // WHY A SEPARATE FILE
 // -------------------
@@ -43,7 +43,7 @@
 // THE LETTER HUE IS A STEPPED GRADIENT, NOT A SCATTER
 // ---------------------------------------------------
 // "Random colour per letter" read literally is a jitter: every letter an
-// independent hue, so काली comes out as four unrelated confetti dots and the
+// independent hue, so à¤•à¤¾à¤²à¥€ comes out as four unrelated confetti dots and the
 // word stops being a word. Instead the hue STEPS across the word by a seeded
 // amount, with a small jitter on top. A word reads as one coloured object that
 // has a gradient through it, which is the effect people are actually asking for,
@@ -71,25 +71,119 @@ export const COLOR_LEVELS = ["off", "calm", "vivid", "wild"];
 // reproduces what shipped first, so `--color-scheme rainbow` is how you go back
 // to a look you have already seen rather than guessing at it.
 export const COLOR_SCHEMES = [
-  "mono", "analogous", "triad", "split", "complement", "rainbow",
+  "mono", "analogous", "triad", "split", "complement", "rainbow", "duo",
 ];
 
 // The hues each scheme may use, as OFFSETS from the anchor, in degrees. Read as
 // "which slots exist", not "which slot each word takes" -- the dealing is in
 // linePalette(), because the order matters as much as the set.
+//
+// "W" is the WHITE slot, and it is not a hue. It is here because the commonest
+// request for this file has been "red and white" -- and one hue plus achromatic
+// is not any of the harmonic schemes, because no music theory contains it.
+//
+// White is also the one slot that must never take a random lightness: white is
+// white. It is PINNED, and check_color.mjs asserts both halves of that -- that a
+// "W" slot comes out achromatic, and that it comes out bright.
 const SCHEME_OFFSETS = {
   mono: [0],
   analogous: [-30, -15, 0, 15, 30],
   triad: [0, 120, 240],
   split: [0, 150, 210],
   complement: [0, 180],
+  // The anchor plus white. `--color-hue 0` gives red and white, 210 gives blue
+  // and white. WHICH words get the accent is dealt rather than fixed, so a line
+  // is a mix of the two and not "all red, then all white".
+  duo: [0, "W"],
   rainbow: null,   // null = the level's own hueSpan, no relationship imposed
 };
+
+// The white slot's exact value. Pinned, and the LIGHT end of the level's own
+// range is deliberately not used: white at L=0.90 is a very light grey and would
+// sit between the red and the paper instead of reading as an accent.
+// `!== undefined`, NOT `||`. `rainbow` is stored as null -- "no slots, use the
+// level's own span" -- and `null || analogous` is analogous. So for as long as
+// schemes existed, `--color-scheme rainbow` silently rendered as analogous and
+// the only symptom was that a colour scheme nobody could see had no effect. It
+// was caught by check_color.mjs asserting the pre-scheme behaviour still worked,
+// which is the argument for asserting that an OLD behaviour still works, not just
+// that the new one does.
+const slotsFor = (scheme) =>
+  Object.prototype.hasOwnProperty.call(SCHEME_OFFSETS, scheme)
+    ? SCHEME_OFFSETS[scheme]
+    : SCHEME_OFFSETS.analogous;
+
+// The white slot's exact value. Pinned, and the LIGHT end of the level's own
+// range is deliberately not used: white at L=0.90 is a very light grey and would
+// sit between the accent and the paper instead of reading as an accent.
+const WHITE_SLOT = { sat: 0, light: 1 };
+
+// `duo` gets its OWN chroma range, and this is the most consequential line in
+// the file.
+//
+// "Red" and "the red the shared `vivid` range gives you" are not the same
+// colour. At sat 0.38-0.70 and light 0.80-0.95, hue 0 renders as a washed-out
+// PINK -- which is what the first red-and-white render looked like, and it was
+// not a bug in the palette, it was the level's lightness range doing exactly
+// what it was written to do. A recognisable red is sat ~1.0 at light ~0.5.
+//
+// That is BELOW every level's lightness floor. And it should be allowed to be,
+// because the floor was measuring the wrong thing. What Add blending adds, and
+// what scan_visibility.py counts, is LUMINANCE -- and a saturated red at
+// hsl(0, 1, 0.5) is rgb(255,0,0) with a luminance of 76/255. That is far above
+// the scan's threshold of 12 and plainly visible over footage, while its HSL
+// lightness is only 0.50.
+//
+// So the real invariant is a LUMA floor, asserted in check_color.mjs, and a
+// scheme that trades HSL lightness for chroma is legitimate as long as luma
+// holds. Without that change there is exactly one way to get a real red -- a
+// hand-written --color -- which bypasses the seeded system and the checks with
+// it.
+const DUO_CHROMA = { sat: [0.82, 1.0], light: [0.46, 0.60] };
+
+/** Relative luminance 0..1 -- what Add blending adds, and what the scan counts. */
+export function luma({ sat, light }) {
+  const hue = 0; // hue is irrelevant: the HSL->RGB channels are permuted, and the
+  // LUMINANCE weights sum to 1 whichever way round they land.
+  void hue;
+  const s = clamp(sat, 0, 1);
+  const l = clamp(light, 0, 1);
+  if (s === 0) return l;
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const band = (t) => {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  const [r, g, b] = [band(1 / 3), band(0), band(2 / 3)];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// The floor, in the same units the scan uses (0..255).
+//
+// AND THE CONSTRAINT ON THIS NUMBER, which is the useful part:
+//
+// A fully saturated red at hsl(0, 1, 0.5) is rgb(255,0,0), whose luminance is
+// 0.2126 * 255 = 54. So 54/255 is the MAXIMUM luminance any pure red can have,
+// and ANY floor above it forbids red by arithmetic. The first version of this
+// floor was 60/255, chosen to sound safe, and it made a real red impossible --
+// which is the entire reason this problem existed in the first place, arriving
+// again from the other direction. If you raise this number, check that a red is
+// still legal before you commit.
+//
+// 40/255 is a sixth of white: comfortably above the scan's --lit threshold of 12,
+// plainly visible over footage, and low enough to admit red.
+export const LUMA_FLOOR = 40 / 255;
 
 // Per level, the four numbers that define the look. Written out rather than
 // computed so that changing the look is editing a table, not reading arithmetic.
 //
-//   hueSpan   how far a word's hue may drift from the base, in degrees (±)
+//   hueSpan   how far a word's hue may drift from the base, in degrees (Â±)
 //   sat       [min, max] saturation, 0..1
 //   light     [min, max] lightness, 0..1. The MIN is the blend floor (see above)
 //             and is the number that keeps the text visible over footage.
@@ -178,21 +272,25 @@ export function wordColor(level, seed, baseHue, cueIndex, wordIndex, opts) {
   // stops two neighbouring words landing on the same colour -- which is why this
   // is not a per-word draw any more. wordIndex is the only thing it needs.
   const palette = linePalette(level, scheme, seed, baseHue, cueIndex, wordIndex + 1);
-  const hue = palette[wordIndex];
-  const sat = L.sat[0] + unit(`${seed}:C${cueIndex}:wSat`, wordIndex) * (L.sat[1] - L.sat[0]);
-  // Lightness is clamped to the level's floor AFTER the draw, so a low draw can
-  // never produce a word that adds no light. See the overlay note at the top.
-  const light = clamp(
-    L.light[0] + unit(`${seed}:C${cueIndex}:wLight`, wordIndex) * (L.light[1] - L.light[0]),
-    L.light[0],
-    L.light[1]
-  );
+  const slot = palette[wordIndex];
 
-  return { hue, sat, light, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
+  // The slot may be the achromatic WHITE one, in which case slotHsl pins it and
+  // there is no random lightness to draw. Everything else draws sat and light
+  // from the level's range as before.
+  const hsl = slotHsl(slot, L, `${seed}:C${cueIndex}:w${wordIndex}`, baseHue, "", wordIndex, scheme);
+  const { hue, sat, light } = hsl;
+  const white = isWhiteSlot(slot);
+
+  return {
+    hue, sat, light, white, duo: scheme === 'duo',
+    css: hslCss(hue, sat, light),
+    rgb: hslRgbTriple(hue, sat, light),
+  };
 }
 
 /**
- * The colour of one letter, given its word's colour. Returns the word's own
+ * The colour of one letter, given its word's colour.
+ * Returns the word's own
  * colour unchanged when the level has no per-letter step, so callers can use
  * the return value unconditionally.
  *
@@ -207,23 +305,41 @@ export function letterColor(level, seed, baseHue, cueIndex, wordIndex, letterInd
   // correct and is also what keeps a one-letter word from looking arbitrary.
   if (letterIndex <= 0) return word;
 
+  // A WHITE word keeps its letters white, and this is not an oversight -- it is
+  // the whole reason the white slot is flagged rather than merely being
+  // sat=0. You cannot step a gradient out of white without leaving white: the
+  // first letter would pull toward the anchor hue at the level's minimum
+  // saturation and the word would read as a gradient that starts white, which is
+  // the rainbow-across-a-word effect the `duo` scheme exists to avoid. White is
+  // an ACCENT here, and an accent is flat.
+  if (word && word.white) return word;
+
   const [smin, smax] = L.step;
   const step = smin + unit(`${seed}:C${cueIndex}:w${wordIndex}:step`, 0) * (smax - smin);
   const jitter = (unit(`${seed}:C${cueIndex}:w${wordIndex}:j`, letterIndex) * 2 - 1) * 6;
 
   const hue = wrapHue(word.hue + letterIndex * step + jitter);
+  // Letters wander around the WORD's own sat and light, and are clamped to
+  // whichever range produced that word -- not blindly to the level's. Clamping to
+  // the level is how a real red at light 0.50 comes back from letter 3 as pink at
+  // light 0.80, and the word visibly fades toward the top of its own gradient.
+  const band = word.duo ? DUO_CHROMA : L;
   const sat = clamp(
     word.sat + (unit(`${seed}:C${cueIndex}:w${wordIndex}:lSat`, letterIndex) * 2 - 1) * 0.10,
-    L.sat[0],
-    L.sat[1]
+    band.sat[0],
+    band.sat[1]
   );
   // Letter lightness wanders only NARROWLY around the word's. A big per-letter
   // lightness jump would put a dim letter between two bright ones, and under Add
   // blending that letter disappears against the footage while its neighbours stay
   // -- a letter-sized dropout, which is worse than any colour effect.
-  const light = clamp(word.light + (unit(`${seed}:C${cueIndex}:w${wordIndex}:lLight`, letterIndex) * 2 - 1) * 0.05, L.light[0], L.light[1]);
+  const light = clamp(
+    word.light + (unit(`${seed}:C${cueIndex}:w${wordIndex}:lLight`, letterIndex) * 2 - 1) * 0.05,
+    band.light[0],
+    band.light[1]
+  );
 
-  return { hue, sat, light, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
+  return { hue, sat, light, white: false, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
 }
 
 /** Whether a level paints letters as well as words. Used to decide span nesting. */
@@ -256,11 +372,14 @@ export function linePalette(level, scheme, seed, baseHue, cueIndex, wordCount) {
   if (!L) return null;
   if (wordCount <= 0) return [];
 
-  const slots = SCHEME_OFFSETS[scheme] || SCHEME_OFFSETS.analogous;
-  const dealt = shuffle(slots, `${seed}:C${cueIndex}:palette`);
+  const slots = slotsFor(scheme);
 
   // rainbow keeps the level's own span, which is the pre-scheme behaviour and
-  // the reason it stays a named scheme rather than a deleted branch.
+  // the reason it stays a named scheme rather than a deleted branch. It is
+  // checked BEFORE the shuffle, because shuffling `null` is the whole crash --
+  // and it crashed the moment rainbow started actually being honoured, which is
+  // the argument for a fix being tested on the path it fixes rather than only on
+  // the path it was written for.
   if (slots === null) {
     return Array.from({ length: wordCount }, (_, i) =>
       wrapHue(
@@ -269,8 +388,8 @@ export function linePalette(level, scheme, seed, baseHue, cueIndex, wordCount) {
       ));
   }
 
-  return Array.from({ length: wordCount }, (_, i) =>
-    wrapHue(baseHue + dealt[i % dealt.length]));
+  const dealt = shuffle(slots, `${seed}:C${cueIndex}:palette`);
+  return Array.from({ length: wordCount }, (_, i) => dealt[i % dealt.length]);
 }
 
 /** Deterministic Fisher-Yates on a copy. Same seed, same order, every render. */
@@ -282,6 +401,34 @@ function shuffle(arr, salt) {
   }
   return a;
 }
+
+/**
+ * Turn one palette SLOT into an hsl triple.
+ *
+ * Every consumer of a palette goes through this, because the "W" slot is not a
+ * hue and three call sites each working it out separately is three places to
+ * forget. It is exported for check_color.mjs, which asserts the white slot
+ * really is white.
+ */
+export function slotHsl(slot, L, seed, baseHue, saltTag, n, scheme) {
+  if (slot === "W") {
+    return { hue: wrapHue(baseHue), sat: WHITE_SLOT.sat, light: WHITE_SLOT.light };
+  }
+  const hue = wrapHue(baseHue + slot);
+  // `duo`'s chromatic slot uses its own chroma range -- see DUO_CHROMA above for
+  // why a real red has to be allowed below the level's lightness floor.
+  const range = scheme === "duo" ? DUO_CHROMA : L;
+  const sat = range.sat[0] + unit(saltTag + ":sat", n) * (range.sat[1] - range.sat[0]);
+  const light = clamp(
+    range.light[0] + unit(saltTag + ":light", n) * (range.light[1] - range.light[0]),
+    range.light[0],
+    range.light[1]
+  );
+  return { hue, sat, light };
+}
+
+/** Whether a slot is the white one. Small, but three call sites need it. */
+export const isWhiteSlot = (slot) => slot === "W";
 
 /**
  * One colour for a WHOLE line.
@@ -301,18 +448,22 @@ export function lineColor(level, scheme, seed, baseHue, cueIndex) {
   const L = LEVELS[level];
   if (!L) return null;
 
-  const slots = SCHEME_OFFSETS[scheme] || SCHEME_OFFSETS.analogous;
-  const hue = slots === null
+  const slots = slotsFor(scheme);
+  // A phrase line is ONE colour, so it takes ONE dealt slot -- including the
+  // white one, which is how a phrase line becomes white half the time rather
+  // than never.
+  const slot = slots === null
     ? wrapHue(baseHue + (unit(`${seed}:C${cueIndex}:lineHue`, 0) * 2 - 1) * L.hueSpan)
-    : wrapHue(baseHue + slots[Math.floor(unit(`${seed}:C${cueIndex}:lineSlot`, 0) * slots.length)]);
+    : slots[Math.floor(unit(`${seed}:C${cueIndex}:lineSlot`, 0) * slots.length)];
+  const hsl = slotHsl(slot, L, `${seed}:C${cueIndex}:line`, baseHue, "", 0, scheme);
+  const { hue, sat, light } = hsl;
 
-  const sat = L.sat[0] + unit(`${seed}:C${cueIndex}:lineSat`, 0) * (L.sat[1] - L.sat[0]);
-  const light = clamp(
-    L.light[0] + unit(`${seed}:C${cueIndex}:lineLight`, 0) * (L.light[1] - L.light[0]),
-    L.light[0],
-    L.light[1]
-  );
-  return { hue, sat, light, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
+  return {
+    hue, sat, light,
+    white: isWhiteSlot(slot),
+    css: hslCss(hue, sat, light),
+    rgb: hslRgbTriple(hue, sat, light),
+  };
 }
 
 /**
@@ -336,7 +487,15 @@ export function gradientCss(level, scheme, seed, baseHue, cueIndex, angleDeg = 9
   const light = (L.light[0] + L.light[1]) / 2;
   return (
     "linear-gradient(" + angleDeg + "deg, " +
-    stops.map((h) => hslCss(h, sat, light)).join(", ") +
+    // Through slotHsl, so a white slot in the palette becomes an actual WHITE
+    // gradient stop rather than hsl(0, 62%, 83%) -- which is pink. That was a real
+    // bug on the first run of `duo --color-gradient`: a red-to-pink line, and the
+    // obvious reading was that the white slot was broken rather than
+    // reinterpreted as a hue.
+    stops.map((slot, i) => {
+      const h = slotHsl(slot, L, `${seed}:C${cueIndex}:grad${i}`, baseHue, "", i, scheme);
+      return hslCss(h.hue, h.sat, h.light);
+    }).join(", ") +
     ")"
   );
 }
