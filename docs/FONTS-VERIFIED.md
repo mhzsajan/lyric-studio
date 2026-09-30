@@ -116,7 +116,15 @@ All 42 preferred fonts were rendered or gate-checked on Allare (2026-09-30).
 
 This corrects the earlier note in this file that treated Abhinav as the
 example of a verified legacy font: its class, round-trip and cmap all pass,
-and that was never sufficient (gotchas 35 and 37).
+and that was never sufficient (gotchas 35 and 38).
+
+**Coverage of the catalogue:** the 42-font list these came from is the
+**user's own handpicked list** (see the font repo's README "Preferred
+fonts"), and all 42 now carry a verdict. Beyond it, 166 of the font repo's
+214 fonts are untested — of which only the **62 PREETI-class** ones are
+worth a song render (GENERATED layouts cannot write real songs; UNICODE
+cannot fail the legacy way). The full working/not-working/to-be-tested
+tables live in the font repo's `docs/RENDER-TESTED.md`.
 
 ---
 
