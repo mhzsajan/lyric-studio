@@ -280,6 +280,57 @@ console.log("\n=== 3. the two font-verdict files list the SAME working fonts ===
       .concat([...failB].filter((s) => workA && workA.has(s))))];
     ok(conflict.length === 0, "no font is WORKING in one file and FAILED in the other",
       conflict.length ? conflict.join(", ") : "-");
+
+    // The stated pass count must agree with the table it is describing.
+    //
+    // This is the check that matters most, and the one that is currently RED.
+    // FONTS-VERIFIED.md says "7 of the 42 passed" and names those seven in
+    // parentheses, while the WORKING table above it still lists eleven. Four
+    // fonts -- ananda-lipi-bold-bt, himalayabold, katmandu, shreenath-bold --
+    // are in the table, in neither the named seven nor the failed prose, and all
+    // four are class=PREETI in sweep.json.
+    //
+    // It is deliberately NOT resolved here. "Delete the four" and "the four are
+    // fine, fix the prose" are both defensible, and picking wrongly either
+    // discards four working fonts or leaves four broken ones in the list people
+    // actually render from. Only a person who has looked at the glyphs can say
+    // which -- the abhinav lesson again: correct class, clean round-trip, full
+    // cmap, and still spelling words wrong.
+    const stated = /(\d+)\s+of\s+the\s+(\d+)\s+(?:handpicked\s+)?(?:passed|preferred|fonts)/i.exec(ta);
+    // The names beside the count may be backticked or bare. Accept both, then
+    // keep only tokens that are REAL slugs in sweep.json -- so a stray English
+    // word in the parenthetical cannot be mistaken for a font, and a typo'd
+    // name is visibly absent from the count rather than silently counted.
+    const knownSlugs = (() => {
+      try {
+        const s = JSON.parse(fs.readFileSync(path.join(FONT_REPO, "sweep.json"), "utf8"));
+        return new Set(s.map((e) => e.slug));
+      } catch { return null; }
+    })();
+    const namedList = (() => {
+      // "passed** (a, b, c)" -- the bold close sits between the word and the
+      // paren, so the gap has to tolerate '**'.
+      const m = /passed\s*\*{0,2}\s*\(([^)]*)\)/i.exec(ta);
+      if (!m) return null;
+      const toks = [...m[1].matchAll(/`?([a-z0-9][a-z0-9-]*)`?/g)].map((x) => x[1]);
+      return knownSlugs ? new Set(toks.filter((t) => knownSlugs.has(t))) : new Set(toks);
+    })();
+    if (stated && namedList) {
+      const claimed = Number(stated[1]);
+      ok(claimed === namedList.size,
+        "the stated pass count matches the list of fonts named beside it",
+        "says " + claimed + ", names " + namedList.size);
+      if (workA) {
+        const extra = [...workA].filter((s) => !namedList.has(s));
+        ok(extra.length === 0,
+          "the WORKING table contains exactly the fonts stated as passing",
+          extra.length
+            ? "in the table but not in the stated " + claimed + ": " + extra.join(", ")
+            : "table and prose agree");
+      }
+    } else {
+      console.log("  note  no 'N of the M passed (...)' sentence found to cross-check the table");
+    }
   }
 }
 

@@ -105,6 +105,16 @@ const BASE_DEFAULTS = {
   // clamped to 0.45 in render.mjs.
   sizeMode: "word",
   sizeVar: 0.15,
+  // --depth: the seven COMPOSITION layers (tracking, baseline drift, arc,
+  // coupled depth, the sequenced reveal, chromatic offset, audio-keyed glow).
+  // These are separate from --motion, which varies how a line ARRIVES: these
+  // change how the words are laid out and relate to each other on screen.
+  // Off by default, like --motion and --size-drift: a file rendered with a
+  // default you did not ask for is a file whose look nobody chose.
+  depth: "off",
+  // Per-cue audio amplitude, 0..1, for the glow. Null unless supplied, and
+  // pulseGlow falls back to a slow breath rather than to nothing.
+  amplitudes: null,
   // Word-by-word animation: "off" animates whole lines, otherwise each word is
   // scheduled across the cue and animates as it arrives.
   wordAnim: "off",

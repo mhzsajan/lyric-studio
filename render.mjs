@@ -50,6 +50,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOTION_LEVELS } from "./src/motion.js";
 import { WORD_ANIMS, LETTER_ANIMS, STYLE_ANIMS } from "./src/anim-pools.mjs";
+// The entire interface to the font repository. Everything this renderer knows
+// about fonts -- which are usable, and how to encode for them -- it asks for
+// there rather than keeping here.
+import {
+  findFontsRepo, checkFont, printReport, fontRepoScript, fontRepoScriptPath,
+  FONTS_REPO_HELP,
+} from "./scripts/font_ref.mjs";
+// The composition-layer levels. DEPTH_LEVELS lives in src/depth.js next to the
+// implementations, so the validator and the code cannot disagree -- the same
+// reason the word/letter pools moved to src/anim-pools.mjs.
+import { DEPTH_LEVELS } from "./src/depth.js";
 const WORD_ANIM_LIST = WORD_ANIMS;
 const LETTER_ANIM_LIST = LETTER_ANIMS;
 const STYLE_ANIM_LIST = STYLE_ANIMS;
@@ -127,7 +138,8 @@ if (!["mp4", "mov"].includes(FORMAT)) {
 
 // --legacy-font ams.manthan.ttf: render through a Preeti-era font by
 // converting the Unicode lyrics to that font's key sequences first. Needs
-// python + npttf2utf (see scripts/lrc_legacy.py). Pair with --font <family>.
+// python + npttf2utf, both from the FONT repo (scripts/lrc_legacy.py there).
+  // Pair with --font <family>.
 const LEGACY_FONT = flag("--legacy-font");
 const FONT_FILE_ARG = flag("--font-file");
 const BATCH = flag("--batch");
@@ -142,7 +154,30 @@ const BATCH = flag("--batch");
 // Point somewhere else with --fonts-repo, or place the repo as a sibling
 // directory named nepali-legacy-fonts.
 const FONT_SLUG = flag("--font-slug");
-const FONTS_REPO = flag("--fonts-repo") || guessFontsRepo();
+
+// The font repository. All font knowledge -- layouts, the encoder, and the
+// verdicts on which fonts actually work -- lives there. This repository renders
+// video and asks. `findFontsRepo` returns null when it is absent rather than
+// throwing, because a Unicode font needs none of it; the legacy path reports the
+// absence at the point where it actually matters.
+const FONTS_REPO = findFontsRepo(flag("--fonts-repo"));
+
+// --strict-fonts decides what a non-working font does to a render.
+//
+// Default ON: a deliverable should not be built from a font nobody has looked
+// at. But `untested` exists because fonts are still being tested, and a renderer
+// that refuses untested fonts cannot be used to test them -- so --no-strict-fonts
+// warns and proceeds. A font the font repo records as *broken* is refused either
+// way: rendering it costs six minutes to produce a file already documented as
+// spelling words wrong.
+const STRICT_FONTS = has("--no-strict-fonts") ? false : true;
+
+// What each non-working state means, in the words the font repo uses. Kept here
+// as wording only -- the STATES and their rules come from the font repo, and
+// duplicating the rules is the second copy this split exists to remove.
+const FONT_RISK_TEXT = {
+  untested: "never rendered and never eye-checked",
+};
 
 // These are opposite operations, so asking for both is a mistake worth naming
 // rather than a precedence question. Checked at the top of run(), before
@@ -393,23 +428,81 @@ function resolveLegacyFont(fileOrPath, lrcPath) {
  * not exist -- the caller reports it with the full path, which is more use than
  * a bare null.
  */
-function guessFontsRepo() {
-  const here = path.dirname(path.resolve(process.argv[1] || "."));
-  const candidates = [
-    path.resolve(here, "..", "nepali-legacy-fonts"),
-    path.resolve(here, "nepali-legacy-fonts"),
-  ];
-  // tools/ is where these repos live on this machine, but do not hardcode a
-  // home directory: fall back to the clone the user most likely has.
-  const home = process.env.USERPROFILE || process.env.HOME || "";
-  if (home) {
-    candidates.push(path.join(home, "tools", "nepali-legacy-fonts"));
-    candidates.push(path.join(home, "nepali-legacy-fonts"));
+// (the repo lookup itself moved to scripts/font_ref.mjs -- see findFontsRepo)
+
+/**
+ * Consult the font repo's verdicts before rendering with a named font.
+ *
+ * The font GATE asks "can this layout write this song" and answers in seconds.
+ * This asks "has anyone watched this font render a song" -- a different question,
+ * and the one that decides whether the audience sees the right letters. Two
+ * genuine Preeti fonts pass the gate and spell words wrong; five print raw
+ * ASCII. Neither is detectable by asking whether the keys resolve.
+ *
+ * Policy, and it is a policy rather than a fact:
+ *
+ *   working    proceed
+ *   untested   proceed with a loud warning, unless --strict-fonts (the default)
+ *   broken     refuse. It is documented as spelling words wrong or printing
+ *              ASCII; rendering it spends six minutes to reproduce a known fault.
+ *   failed     refuse, same reasoning.
+ *
+ * Untested is not fatal even in strict mode, because the font repo's untested
+ * state is where fonts being tested live, and a renderer that refuses them
+ * cannot be used to find out whether they work. Strict mode refuses a
+ * *deliverable* built on one; it does not block the experiment.
+ */
+function reportFontVerdict(slug) {
+  if (!FONTS_REPO) return;
+  let verdict;
+  try {
+    const r = checkFont(FONTS_REPO, slug, { strict: STRICT_FONTS });
+    verdict = r.verdict;
+    if (r.ok) {
+      if (r.verdict.state === "working") return;   // nothing to say
+      console.warn(
+        "  warning: " + slug + " is UNTESTED in the font repo -- " +
+        (FONT_RISK_TEXT.untested) + "."
+      );
+      console.warn(
+        "           Rendering anyway because that is how a font gets tested. For a\n" +
+        "           deliverable, pick one marked `working`:  py " +
+        fontRepoScriptPath(FONTS_REPO, "check_verdicts.py") + " --report"
+      );
+      return;
+    }
+    console.error("");
+    console.error("  refusing to render with " + slug + ": the font repo records it as " +
+      verdict.state.toUpperCase() + ".");
+    if (verdict.reason) console.error("    reason: " + verdict.reason);
+    if (verdict.note) console.error("    " + verdict.note);
+    console.error("");
+    console.error("  The four states, and what they mean:");
+    console.error("    working   rendered a full song and passed a human eye-check");
+    console.error("    untested  no evidence either way -- NOT a pass");
+    console.error("    broken    tested and rejected");
+    console.error("    failed    cannot write real songs at all");
+    console.error("");
+    if (!verdict.knownBad) {
+      console.error("  To render with an untested font on purpose:");
+      console.error("      add --no-strict-fonts");
+      console.error("");
+    }
+    console.error("  Every font, with its verdict:  py " +
+      fontRepoScriptPath(FONTS_REPO, "check_verdicts.py") + " --report");
+    console.error("");
+    process.exit(1);
+  } catch (err) {
+    // An unreadable verdicts file is a stop, not a pass. The tempting failure
+    // is to warn and render, because the font might well be fine -- and that is
+    // precisely how a font nobody checked reaches a delivered video.
+    console.error("");
+    console.error("  could not read the font repo's verdicts: " + err.message);
+    console.error("  Refusing rather than rendering unchecked. Fix it with:");
+    console.error("      py " + fontRepoScriptPath(FONTS_REPO, "check_verdicts.py"));
+    console.error("");
+    process.exit(1);
   }
-  for (const c of candidates) {
-    if (fs.existsSync(path.join(c, "layouts"))) return c;
-  }
-  return candidates[0];
 }
 
 /**
@@ -681,7 +774,7 @@ async function run(audioPath, lrcPath) {
       console.error("");
       console.error("  These 1990s-era Nepali fonts map ASCII keys, not Unicode, so the");
       console.error("  lyrics must be transcoded before Chromium can render them. That is");
-      console.error("  what scripts/lrc_legacy.py does.");
+      console.error("  what the font repo's scripts/lrc_legacy.py does.");
       console.error("");
       console.error("  Fix:  install Python 3, and make sure one of `python`, `py` or");
       console.error("        `python3` runs in this shell (all three are tried, in that");
@@ -689,7 +782,8 @@ async function run(audioPath, lrcPath) {
       console.error("  Check with:  python --version   (or  py --version)");
       console.error("");
       console.error("  To render without it, drop --legacy-font and use a Unicode Devanagari");
-      console.error("  font instead -- see docs/FONTS.md for 9 that need no conversion.");
+      console.error("  font instead -- a Unicode face needs no conversion at all. Every font");
+      console.error("  and its verdict:  py <fonts-repo>\\scripts\\check_verdicts.py --report");
       console.error("");
       process.exit(1);
     }
@@ -710,6 +804,10 @@ async function run(audioPath, lrcPath) {
         process.exitCode = 1;
         return;
       }
+      // The gate proves the LAYOUT can write this song. It cannot say the font
+      // draws the right glyphs -- that is the whole reason verdicts.json exists
+      // and the whole reason this check is not redundant with the gate above.
+      if (slug) reportFontVerdict(slug);
     } else {
       console.warn(
         "  note: --legacy-font with no --layout-file falls back to the Preeti\n" +
@@ -720,25 +818,37 @@ async function run(audioPath, lrcPath) {
       );
     }
 
+    // The encoder lives in the FONT repo, not here. It maps Unicode to a font's
+    // own key layout, and the layout data it reads has always lived there --
+    // keeping the only copy of it in the renderer meant that the one place to
+    // look when a font rendered wrong was somewhere nobody would think to look.
+    // (scripts/font_ref.mjs is the whole interface between the two repos.)
+    if (!FONTS_REPO || !fs.existsSync(path.join(FONTS_REPO, "scripts", "lrc_legacy.py"))) {
+      console.error("");
+      console.error("  A legacy font needs the font repository, which is not here.");
+      console.error(FONTS_REPO_HELP);
+      console.error("");
+      process.exit(1);
+    }
     try {
-      execFileSync(py.cmd, [
-        path.join(HERE, "scripts", "lrc_legacy.py"),
+      fontRepoScript(FONTS_REPO, "lrc_legacy.py", [
         lrcPath, convOut,
         "--layout", LEGACY_LAYOUT,
         ...(layoutFile ? ["--layout-file", layoutFile] : []),
         "--font-family", family,
         "--font-file", path.basename(fontPath),
-      ], { stdio: "inherit", cwd: HERE });
+      ]);
     } catch (err) {
       // Surface the real cause. lrc_legacy.py prints "not round-trip exact"
       // warnings to stderr and exits non-zero if it cannot finish, and those
       // warnings are the actual diagnostic -- do not swallow them behind a
       // generic message.
       console.error("");
-      console.error("  scripts/lrc_legacy.py failed (exit " + (err.status ?? "?") + ").");
+      console.error("  the font repo's lrc_legacy.py failed (exit " + (err.status ?? "?") + ").");
       console.error("  Any 'not round-trip exact' lines above name the word that failed");
       console.error("  to encode cleanly -- the font may not be Preeti-layout.");
-      console.error("  See docs/FONTS.md for which fonts are Preeti and which are not.");
+      console.error("  Check which fonts are Preeti, and which are known broken:");
+      console.error("      py " + fontRepoScriptPath(FONTS_REPO, "check_verdicts.py") + " --report");
       console.error("");
       process.exit(1);
     }
@@ -834,17 +944,49 @@ async function run(audioPath, lrcPath) {
   //
   // Reading is done HERE, not in parse-ends.mjs, because that module is
   // bundled for the browser and cannot use "fs".
+  // How many `m:ss.ss | m:ss.ss | text` rows a candidate ends file has. Used
+  // only to CHOOSE between two files -- parseLrc does the real parsing. It is
+  // deliberately a count and not a parse: the question is "does this file look
+  // like ends at all", and reusing the real parser would mean trusting the thing
+  // being chosen between.
+  const endsPath_probe = (text) => {
+    const row = /^\s*\d+:\d+(?:[.:]\d+)?\s*\|\s*\d+:\d+(?:[.:]\d+)?\s*\|/;
+    let n = 0;
+    for (const line of String(text).split(/\r?\n/)) if (row.test(line)) n++;
+    return n;
+  };
+  const endsRowCount = endsPath_probe;
+
   const lrcBase = lrcPath.replace(/\.lrc$/i, "");
   const pairBase = lrcBase.replace(/[._-](?:remotion_)?start$/i, "");
   const endsCandidates = flag("--ends")
     ? [flag("--ends")]
     : [
-        pairBase + ".remotion_end.lrc",
+        // ".ends.txt" FIRST. It is the format the renderer parses, and the one
+        // the pipeline itself writes.
+        //
+        // The order was the wrong way round, and the symptom was a long way from
+        // the cause: a folder holding both always used the Song Timer export --
+        // a different format -- so the correct file was never opened. On Kali
+        // Kali that meant 1 of 48 ends applied and the render was refused as
+        // "stale". parseLrc was never at fault: fed the right file it reported
+        // 48/48 timed.
         pairBase + ".ends.txt",
+        pairBase + ".remotion_end.lrc",
       ];
+  // Prefer a candidate that PARSES over one that merely exists. Existence is not
+  // fitness, and having two candidates is only useful if we try the one that
+  // works before settling for the one that is merely there.
+  const readable = endsCandidates.filter((p) => fs.existsSync(p));
   const endsPath =
-    endsCandidates.find((p) => fs.existsSync(p)) || endsCandidates[0];
-  const endsFound = endsCandidates.some((p) => fs.existsSync(p));
+    readable.find((p) => {
+      try {
+        return endsRowCount(fs.readFileSync(p, "utf-8")) > 0;
+      } catch {
+        return false;
+      }
+    }) || readable[0] || endsCandidates[0];
+  const endsFound = readable.length > 0;
   // If the .lrc is clearly one half of a pair and no half was found, say so by
   // name. "none found" alone is indistinguishable from never having tapped
   // ends, and the two need different fixes.
@@ -1143,6 +1285,31 @@ async function run(audioPath, lrcPath) {
     props.motion = motionArg;
   }
   if (numFlag("--motion-block") > 0) props.motionBlock = numFlag("--motion-block");
+
+  // --depth: the seven composition layers in src/depth.js. Separate from
+  // --motion, which varies how a line ARRIVES; this changes how the words are
+  // composed and relate to each other.
+  //
+  // Off by default, like --motion and --size-drift. Two reasons, and the second
+  // is the important one: a composition layer nobody asked for is a look nobody
+  // chose, and `sequence` deliberately DELAYS words until the previous one has
+  // begun -- which is the effect people want and also the one that can put a
+  // word on screen after its line has ended. It is fitted to each cue's own
+  // span so that cannot happen, and check_depth.mjs asserts it, but a default
+  // that changes timing is not a default.
+  const depthArg = flag("--depth") || "off";
+  if (!DEPTH_LEVELS.includes(depthArg)) {
+    console.error('  Unknown --depth "' + depthArg + '". Use one of: ' +
+      DEPTH_LEVELS.join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
+  props.depth = depthArg;
+  if (depthArg !== "off") {
+    console.log("  depth   : " + depthArg +
+      " (tracking, baseline drift, arc, coupled depth, sequenced reveal," +
+      " chromatic, glow)");
+  }
 
   // --styled: the house style (styles/house.md) as DEFAULTS -- title cards on,
   // mix placement, karaoke words, letter pop at the 0.03 cap, size 128, white

@@ -7,6 +7,16 @@ import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
 import { buildMotionPlan, cueMotion, motionParams, travelBudget, wordMotion, MOTION_LEVELS } from "./motion.js";
+// The seven composition layers: tracking, baseline drift, arc, coupled depth,
+// the sequenced reveal, chromatic offset and audio-keyed glow. Separate from
+// motion.js because those vary how a line ARRIVES; these change how it is
+// COMPOSED. See depth.js for the shirorekha rules and the sequencing
+// compression that keeps a delayed word from outliving its line.
+import {
+  tracking as trackFor, baseline as baseFor, arc as arcFor, depth as depthFor,
+  sequence as seqDelay, sequenceStep as seqStep, chromatic as chromaFor,
+  pulseGlow as glowFor, wordDepthStyle, DEPTH_LEVELS,
+} from "./depth.js";
 import { TitleCard } from "./TitleCard.jsx";
 import { AUDIO_FILE, LEGACY_FONT_FILE, LEGACY_FONT_FAMILY, FONT_FILE, FONT_FAMILY_NAME } from "./lyrics.generated.js";
 
@@ -295,7 +305,14 @@ export function wordState(mode, start, end, t, st) {
 function animatedWords(text, opts) {
   const { seed, index, anim, sizeMode, sizeVar, t, cueTime, cueEnd,
           letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm,
-          sizeDrift } = opts;
+          sizeDrift, depthLevel = "off", amplitude = null } = opts;
+
+  // The cue's own span and start, needed by the composition layers. A cue's
+  // span is the budget every layer has to finish inside -- the same budget
+  // motion.js works from, for the same reason: a line still travelling at its
+  // end is the bug the ends file exists to prevent.
+  const cueSpan = Math.max(0.001, cueEnd - cueTime);
+  const cueStartTime = cueTime;
   // anchors come from src/beats.js when a beats.json was passed: word starts
   // quantize to the beat grid, ends stay distributed. undefined = the old
   // even distribution, unchanged.
@@ -347,9 +364,46 @@ function animatedWords(text, opts) {
     // first, so the word's own entrance stays the outermost gesture.
     const transform = [wm, drift, ws.transform].filter(Boolean).join(" ");
 
+    // --depth: the composition layers. Applied to the WORD span, because
+    // tracking has to live on the gap between words (see depth.js) and the rest
+    // are whole-word transforms, which keep the shirorekha continuous.
+    //
+    // The word's own start is what `sequence` shifts, so everything downstream
+    // of the delay sees the DELAYED time. That is the point -- a sequenced line
+    // reads as a chain of causes -- but it is also why the delay is fitted to
+    // the cue's span before anything else asks for a time.
+    const nWords = words.length;
+    const delay = depthLevel === "off" ? 0 : seqDelay(depthLevel, i, nWords, cueSpan);
+    const wStart = w.start + delay;
+    const wAge = t - wStart;
+    // progress through the word's own (delayed) slot, for the depth curve
+    const wProg = w.end > wStart ? clamp01((t - wStart) / (w.end - wStart)) : 0;
+
+    const dTrack = depthLevel === "off" ? 0 : trackFor(depthLevel, wAge, Math.max(0.001, w.end - wStart));
+    const dBase = depthLevel === "off" ? 0 : baseFor(depthLevel, t - cueStartTime, cueSpan, seed, index);
+    const dArc = depthLevel === "off" ? { y: 0, rot: 0 }
+      : arcFor(depthLevel, nWords > 1 ? i / (nWords - 1) : 0.5, wProg);
+    const dDep = depthFor(depthLevel, wProg);
+    // "speed" is how far through its entrance the word is, used only to gate the
+    // chromatic offset: zero when still, so a permanent fringe never appears.
+    const dChroma = chromaFor(depthLevel, 1 - wProg);
+    const dGlow = depthLevel === "off" ? 0 : glowFor(depthLevel, amplitude, t - cueStartTime, cueSpan);
+
+    const depthStyle = depthLevel === "off" ? {} : wordDepthStyle({
+      tracking: dTrack, baseline: dBase, arc: dArc, depth: dDep,
+      chromatic: dChroma, glow: dGlow,
+    });
+
+    // The gap BETWEEN words carries the tracking. Letter spacing inside a word
+    // would separate one syllable's letters and snap the shirorekha, so it is
+    // never applied there -- the limitation is deliberate, not an oversight.
+    const gapStyle = dTrack
+      ? { marginLeft: (dTrack * 0.5).toFixed(3) + "em" }
+      : null;
+
     return (
       <React.Fragment key={i}>
-        {i > 0 ? " " : null}
+        {i > 0 ? <span style={gapStyle || undefined}>&nbsp;</span> : null}
         <span
           style={{
             // inline-block so a scale() has its own box to act on; on a plain
@@ -358,11 +412,12 @@ function animatedWords(text, opts) {
             ...(pct ? { fontSize: pct } : {}),
             ...ws,
             ...(transform ? { transform } : {}),
+            ...depthStyle,
           }}
         >
           {letterNodes(w.text, {
             seed, wordIndex: index, letterIndexBase: i,
-            letterSizeVar, letterAnim, t, wordStart: w.start, wordEnd: w.end,
+            letterSizeVar, letterAnim, t, wordStart: wStart, wordEnd: w.end,
           })}
         </span>
       </React.Fragment>
@@ -639,7 +694,11 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, amplitudes }) => {
+  // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
+  // render.mjs produced; null when there is none, and pulseGlow falls back to a
+  // slow breath rather than to nothing.
+  const cueAmplitude = (i) => (Array.isArray(amplitudes) && amplitudes[i] != null ? amplitudes[i] : null);
   const frame = useCurrentFrame();
   const { fps, width: W_FRAME, height: H_FRAME } = useVideoConfig();
   const t = frame / fps;
@@ -925,6 +984,8 @@ function renderCue(cueObj, isPrev, life) {
         cueTime: cueObj.time, cueEnd: cueObj.end, letterAnim, letterSizeVar: letterVar,
         anchors: anchorsForCue(cueObj, beats, Number(beatTol) || 0.4),
         motionLevel, motionId, motionPrm,
+        // The composition layers, plus this cue's own amplitude for the glow.
+        depthLevel: depth, amplitude: cueAmplitude(cueObj.index),
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)
