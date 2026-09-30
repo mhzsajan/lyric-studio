@@ -182,25 +182,116 @@ def gate_font_file(lrc, ttf):
     return 1
 
 
+def gate_emitted_keys(lrc, ttf, layout):
+    """Every key the encoder EMITS must exist in this font's cmap.
+
+    The layout and the font are two different things, and checking only the
+    layout is the mistake this closes.
+
+    A PREETI font shares its key layout with the whole class -- every one of them
+    encodes identically -- so "the layout can write this song" is a statement
+    about the ALPHABET and says nothing about whether a particular font happens to
+    carry every glyph. Measured on these seven songs: arap007 and shreenath-bold
+    cover a song that pawang, mkali, cv-haha, himalayabold and katmandu do not,
+    on the same encoded output, because those five lack a glyph for one of the
+    keys the encoder emits (U+00CC, U+00A7, U+00B6).
+
+    So running the check once and generalising to the class -- or worse, trusting
+    the stored verdict -- is wrong in both directions: it refuses fonts that would
+    have been fine, and it passes fonts that will draw a blank or fall back.
+    """
+    try:
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "nepali-legacy-fonts", "scripts"))
+        import layout_encoder
+        from fontTools.ttLib import TTFont
+    except ImportError as exc:
+        print("  font gate: cannot check emitted keys (%s)" % exc)
+        return 2
+
+    if not os.path.exists(ttf):
+        print("  font gate: no such font file: " + ttf)
+        return 2
+    try:
+        font = TTFont(ttf, fontNumber=0, lazy=True)
+        cps = set(font.getBestCmap())
+        font.close()
+    except Exception as exc:
+        print("  font gate: cannot read %s: %s" % (os.path.basename(ttf), exc))
+        return 2
+
+    missing = {}
+    for line in read_lines(lrc):
+        for word in line.split():
+            if not any(0x900 <= ord(c) <= 0x97F for c in word):
+                continue
+            try:
+                out = layout_encoder.encode(word, layout)
+            except Exception:
+                continue
+            if isinstance(out, tuple):
+                out = out[0]
+            for ch in str(out):
+                if 0x900 <= ord(ch) <= 0x97F:
+                    continue          # a survivor, not a key: check_song.py's job
+                if ord(ch) not in cps:
+                    missing.setdefault("U+%04X" % ord(ch), []).append(word)
+
+    print("  font gate: %s against layout %s" % (os.path.basename(ttf), layout))
+    if not missing:
+        print("    every key the encoder emits has a glyph in this font -- SAFE")
+        return 0
+    print("    %d key(s) the encoder emits have NO glyph in this font:" % len(missing))
+    for key, words in sorted(missing.items())[:10]:
+        print("      %s   e.g. %s" % (key, words[0]))
+    print("")
+    print("    The layout is shared across this whole font class, so this is a")
+    print("    property of THIS FONT, not of the layout. The words above would be")
+    print("    drawn with a fallback face or a blank. A different font in the same")
+    print("    class may well cover them -- that is why this is checked per font.")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lrc", required=True, help="the song's .lrc (Unicode)")
     ap.add_argument("--slug", help="a legacy font slug from the font repo")
-    ap.add_argument("--layout", help="a layout .json (hand-wired legacy path)")
-    ap.add_argument("--font-file", help="a Unicode .ttf to coverage-check")
+    ap.add_argument("--layout", help="a layout .json, or a built-in name like Preeti")
+    ap.add_argument("--font-file", help="a Unicode .ttf, or --legacy-font's .ttf")
     ap.add_argument("--fonts-repo", help="where the font repo is (default: sibling)")
+    ap.add_argument("--also-emitted-keys", action="store_true",
+                    help="with --layout: also check the .ttf covers every emitted key")
     a = ap.parse_args()
 
     if not os.path.exists(a.lrc):
         print("  font gate: no such .lrc: " + a.lrc)
         return 2
     picks = [bool(a.slug), bool(a.layout), bool(a.font_file)]
-    if sum(picks) != 1:
-        print("  font gate: pass exactly one of --slug, --layout, --font-file")
+    # --font-file alone is the Unicode path. --layout (or --slug) TOGETHER WITH
+    # --font-file is the legacy path, and it is the only way to ask both halves
+    # of the legacy question: can this LAYOUT write the song, and can this FONT
+    # draw every key the layout emits. Forbidding the pair is what made the second
+    # half unreachable, and a half-check that cannot be expressed is not a check.
+    if a.font_file and (a.slug or a.layout):
+        if not a.also_emitted_keys:
+            print("  font gate: --font-file with --layout/--slug asks about the font,\n"
+                  "        so it needs --also-emitted-keys to say which check it is for")
+            return 2
+    elif sum(picks) != 1:
+        print("  font gate: pass one of --slug, --layout, --font-file"
+              " (or --layout with --font-file --also-emitted-keys)")
         return 2
 
     if a.slug or a.layout:
-        return gate_legacy(a.lrc, a.slug, a.layout, a.fonts_repo)
+        rc = gate_legacy(a.lrc, a.slug, a.layout, a.fonts_repo)
+        # The layout check and the font check are separate questions and both have
+        # to pass. Running only the first is the bug this flag exists to close.
+        if rc == 0 and a.also_emitted_keys and a.font_file:
+            rc2 = gate_emitted_keys(a.lrc, a.font_file, a.layout or "Preeti")
+            if rc2 != 0:
+                return rc2
+        return rc
     return gate_font_file(a.lrc, a.font_file)
 
 

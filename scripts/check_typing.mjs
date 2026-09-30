@@ -1,4 +1,4 @@
-// check_typing.mjs -- invariants for the typed-on reveal (src/typing.js).
+﻿// check_typing.mjs -- invariants for the typed-on reveal (src/typing.js).
 //
 //   node scripts/check_typing.mjs
 //
@@ -27,8 +27,11 @@
 // Each is asserted here. If a future change makes fitDelay() return early for
 // any of them, this file fails rather than the video.
 import {
-  typingPlan, fitDelay, typingState, levelIsLetterwise, caretProgress, TYPE_LEVELS,
+  typingPlan, fitDelay, typingState, typingAt, levelIsLetterwise, caretProgress, TYPE_LEVELS,
 } from "../src/typing.js";
+import { wordTimings } from "../src/word-timing.js";
+import { chainBudget, clampedSequence } from "../src/depth.js";
+import { splitGraphemes } from "../src/letters.js";
 
 let failed = 0;
 const ok = (c, label, detail = "") => {
@@ -239,6 +242,144 @@ console.log("\n=== 10. the instrument catches a broken implementation ===");
   // A state that returns {} before the start is the first-frame pop.
   ok(Object.keys({}).length === 0 && typingState("letter", 5, 0.1, 0.1, -1).opacity === 0,
     "the 'unstarted means invisible' assertion rejects the {} version");
+}
+
+console.log("\n=== 11. THE BUG THIS FILE WAS MISSING: the WORD LAYER moves words ===");
+// Every section above fits the chain to the span FROM THE START OF THE LINE, and
+// every one of them passed while the effect was visibly broken on screen.
+//
+// The reason is that the chain is indexed by a letter's position in the whole
+// line but evaluated against its OWN WORD'S start -- and the word layer moves
+// words. They are spread across the cue span, and `--depth`'s sequenced reveal
+// delays each until the previous one has begun. So the last word's letters were
+// scheduled at
+//
+//     (its own start, seconds late)  +  (its line position) * step
+//
+// and the two delays stacked. Measured on Kali Kali with --type letter --depth
+// wild: 15 of 48 cues finished their last letter AFTER the cue ended, and the last
+// word sat visibly EMPTY for its whole slot.
+//
+// These assertions model the word layer, and they require the corrected anchor:
+// a letter's absolute time is max(wordStart, lineIndex * step).
+{
+  const SPANS = [0.46, 2.48, 3.07, 4.37];
+
+  // The word layer is NOT modelled here. It is asked for.
+  //
+  // The previous version of this block carried a hardcoded array of word lags
+  // measured on one real cue, which was a mistake twice over. It was invented
+  // arithmetic the first time (a made-up curve that failed for the wrong reason),
+  // and once it was real it was still a COPY -- and a copy goes stale the moment
+  // word-timing changes. WORD_FILL has since moved every one of those numbers, so
+  // the block would have gone on passing against lags the render no longer uses.
+  //
+  // A timing test whose inputs are literals is a test of the literals. The word
+  // layer is the real thing -- the same wordTimings, chainBudget and
+  // clampedSequence the composition calls -- so this cannot drift from it.
+  const REAL_LINES = [
+    { text: "जाम न माया जाम", span: 1.34 },
+    { text: "काली काली हिस्सी परेकी", span: 3.07 },
+    { text: "मेरो मनमा हुन्छ हलचल", span: 2.98 },
+    { text: "हेर न कस्तो आँखा तरेकी", span: 3.52 },
+  ];
+
+  let bad = null;
+  let walked = 0;
+  for (const lvl of LEVELS) {
+    for (const line of REAL_LINES) {
+      const span = line.span;
+      const cue = { text: line.text, time: 100, end: 100 + span };
+      const words = wordTimings(cue, {});
+      if (!words.length) { bad = bad + `${lvl} "${line.text}": no words`; continue; }
+
+      let letters = 0;
+      for (const w of words) letters += splitGraphemes(w.text).length;
+      const plan = typingPlan(lvl, words.length, letters);
+      const fit = fitDelay(lvl, plan, span);
+      const lastSlot = words[words.length - 1].start - cue.time;
+      const budget = chainBudget(span, undefined, lastSlot);
+
+      let lettersBefore = 0;
+      words.forEach((w, i) => {
+        const slot = w.start - cue.time;
+        // The real word layer, verbatim: the slot plus the clamped sequence.
+        const lag = slot + clampedSequence("wild", i, words.length, span, slot, budget);
+        for (let k = 0; k < splitGraphemes(w.text).length; k++) {
+          walked++;
+          const idx = levelIsLetterwise(lvl) ? lettersBefore + k : i;
+          // The corrected anchor, which is what LyricOverlay now does.
+          const delay = Math.max(0, idx * fit.step - lag);
+          // The per-unit duration is clamped to the cue time this word has left,
+          // which is what LyricOverlay does. Without it a word that starts very
+          // late is cut off mid-type.
+          const dur = Math.min(fit.dur, Math.max(0.001, span - lag));
+          // Absolute time from the START OF THE LINE.
+          const at = lag + delay + dur;
+          if (at > span + 0.002) {
+            bad = bad + `${lvl} "${line.text}" w${i} l${k}: ends ${at.toFixed(3)} > ${span}`;
+          }
+          // And the other half of the contract, which is the one that produced a
+          // VISIBLY EMPTY word: no letter may be scheduled before its own word.
+          if (delay < -1e-9) {
+            bad = bad + `${lvl} "${line.text}" w${i} l${k}: negative delay`;
+          }
+          if (levelIsLetterwise(lvl)) lettersBefore++;
+        }
+      });
+    }
+  }
+  ok(!bad, "every letter of every real line, through the REAL word layer, lands inside the cue",
+    bad || `${walked} letters walked across ${REAL_LINES.length} lines x ${LEVELS.length} levels`);
+
+  // The specific regression, read from the real word layer above rather than
+  // typed in. Which half of it is still live has CHANGED, and the change is the
+  // point rather than a nuisance:
+  //
+  //   Originally the claim was that the old anchor `lag + idx*step` pushed the
+  //   last letter past the cue's end. That is no longer reproducible here, because
+  //   clampedSequence() now holds every word inside its cue before the chain is
+  //   applied -- the stack that used to overrun is capped, so the old form's
+  //   overrun is unreachable. Asserting it anyway would mean asserting a bug that
+  //   a different fix already closed.
+  //
+  //   The claim that is still live, and still the one the user saw, is the OTHER
+  //   half. Without the subtraction the chain's index is a large positive number
+  //   measured from the start of the LINE, subtracted from a lag measured against
+  //   a word that starts seconds later -- so it goes NEGATIVE. A negative delay
+  //   schedules a letter before the word holding it exists, which is not a late
+  //   word, it is a word that appears already finished and then cannot finish:
+  //   the visibly EMPTY word in the original report.
+  //
+  // So the assertion is on the sign, and it is checked against the real numbers
+  // so it cannot quietly become true.
+  const jamCue = { text: "जाम न माया जाम", time: 100, end: 100 + 1.34 };
+  const jamWords = wordTimings(jamCue, {});
+  const jamSpan = 1.34;
+  const jamLetters = jamWords.reduce((a, w) => a + splitGraphemes(w.text).length, 0);
+  const jamFit = fitDelay("letter", typingPlan("letter", jamWords.length, jamLetters), jamSpan);
+  const jamLastSlot = jamWords[jamWords.length - 1].start - jamCue.time;
+  const jamBudget = chainBudget(jamSpan, undefined, jamLastSlot);
+  const jamLag = jamLastSlot +
+    clampedSequence("wild", jamWords.length - 1, jamWords.length, jamSpan, jamLastSlot, jamBudget);
+  const raw = (jamLetters - 1) * jamFit.step - jamLag;
+  const fixed = Math.max(0, raw);
+  ok(raw < 0 && fixed === 0,
+    "without the anchor's max(0,...) the last letter is scheduled BEFORE its own word",
+    `raw delay ${raw.toFixed(3)}s, corrected ${fixed.toFixed(3)}s, word starts at ${jamLag.toFixed(3)}s`);
+  {
+    const finish = jamLag + fixed + Math.min(jamFit.dur, Math.max(0.001, jamSpan - jamLag));
+    ok(finish <= jamSpan + 0.002,
+      "and the corrected anchor lands inside the cue",
+      `last letter ends ${finish.toFixed(3)}s in a ${jamSpan}s cue`);
+  }
+
+  // And typingAt() is the function the overlay actually calls, so it has to agree
+  // with typingState() rather than being a second, differently-behaving copy.
+  const a = typingState("letter", 4, 0.035, 0.09, 0.2);
+  const b = typingAt("letter", 4 * 0.035, 0.09, 0.2);
+  ok(a.opacity === b.opacity && a.clipPath === b.clipPath,
+    "typingAt() and typingState() agree -- one behaviour, two call shapes");
 }
 
 console.log("\n" + (failed

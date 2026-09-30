@@ -110,14 +110,50 @@ export function fitDelay(level, plan, span) {
  * @returns {{opacity:number, clipPath:string|null}}
  */
 export function typingState(level, unitIndex, delay, dur, elapsed) {
+  return typingAt(level, unitIndex * delay, dur, elapsed);
+}
+
+/**
+ * The same state, from an ABSOLUTE delay in seconds rather than an index.
+ *
+ * This exists because of a bug the index form could not express.
+ * animatedWords() evaluates every letter against its OWN word's start -- and the
+ * word layer MOVES words: they are spread across the cue span, and `--depth`'s
+ * sequenced reveal deliberately delays each until the previous one has begun. So
+ * the last word's first letter was scheduled at
+ *
+ *     (its own start)  +  (its position in the line) * step
+ *
+ * which is the sum of two delays, and only the second was ever fitted to the
+ * span. Measured on Kali Kali with `--type letter --depth wild`: 15 of 48 cues
+ * finished their last letter AFTER the cue ended, and the last word sat visibly
+ * empty for its whole slot, waiting on a chain that had begun seconds earlier.
+ *
+ * It is worth being precise about why the every-frame scan did not catch it. The
+ * scan measures INK against the cue window. A letter clipped to zero width draws
+ * no ink, so a word that never finishes typing is INVISIBLE rather than lingering,
+ * and there is nothing after the cue's end for the scan to find. This bug is a
+ * MISSING word; the gate was built to catch a word that stays too long. Opposite
+ * failures, and only one of them was covered.
+ *
+ * So the caller passes the delay as
+ *
+ *     max(0, letterIndex * step - wordLag)
+ *
+ * where `wordLag` is how late this word's own arrival is. That makes a letter's
+ * absolute time max(wordStart, lineIndex * step): the chain still sweeps the line
+ * in order, but never schedules a letter before the word containing it is on
+ * screen. That is the only definition under which "typed on" is true.
+ */
+export function typingAt(level, delaySeconds, dur, elapsed) {
   if (!LEVELS[level]) return {};
 
-  // Negative elapsed means this unit has not started. The word layer's own
+  // Negative local means this unit has not started. The word layer's own
   // opacity is already handling the whole line, so an unstarted unit only needs
   // to be invisible -- and MUST be invisible, which is why this returns 0 rather
   // than "nothing": returning nothing would leave it at its parent's opacity and
   // the word would appear fully typed for a frame before it starts.
-  const local = elapsed - unitIndex * delay;
+  const local = elapsed - delaySeconds;
   if (local <= 0) return { opacity: 0 };
 
   const p = clamp01(local / Math.max(0.001, dur));

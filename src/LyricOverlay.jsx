@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { AbsoluteFill, Audio, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from "remotion";
 import { styleFor, jitterFor, positionFor, sizeFor, seededRandom, hashString } from "./animations.js";
 import { buildMixPlan } from "./mix.js";
@@ -23,7 +23,7 @@ import {
 // same reason `sequence` is -- a letter still arriving at the line's end is the
 // lingering-lyric bug.
 import {
-  typingPlan, fitDelay, typingState, levelIsLetterwise, TYPE_LEVELS,
+  typingPlan, fitDelay, typingAt, levelIsLetterwise, TYPE_LEVELS,
 } from "./typing.js";
 import { buildMotionPlan, cueMotion, motionParams, travelBudget, wordMotion, MOTION_LEVELS } from "./motion.js";
 // The seven composition layers: tracking, baseline drift, arc, coupled depth,
@@ -33,7 +33,7 @@ import { buildMotionPlan, cueMotion, motionParams, travelBudget, wordMotion, MOT
 // compression that keeps a delayed word from outliving its line.
 import {
   tracking as trackFor, baseline as baseFor, arc as arcFor, depth as depthFor,
-  sequence as seqDelay, sequenceStep as seqStep, chromatic as chromaFor,
+  sequence, clampedSequence, chainBudget, sequenceStep as seqStep, chromatic as chromaFor,
   pulseGlow as glowFor, wordDepthStyle, DEPTH_LEVELS,
 } from "./depth.js";
 import { TitleCard } from "./TitleCard.jsx";
@@ -334,9 +334,9 @@ function animatedWords(text, opts) {
   const { seed, index, anim, sizeMode, sizeVar, t, cueTime, cueEnd,
           letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm,
           sizeDrift, depthLevel = "off", amplitude = null,
-          colorMode = "off", colorHue = 210, colorScheme = "analogous",
+          colorMode = "off", colorHue = 210, colorScheme = "analogous", accent = 1,
           cut = "off", type = "off", stroke = 0, strokeColor = "#000000",
-          baseSize = 105 } = opts;
+          baseSize = 105, wordFill } = opts;
 
   // The cue's own span and start, needed by the composition layers. A cue's
   // span is the budget every layer has to finish inside -- the same budget
@@ -347,7 +347,7 @@ function animatedWords(text, opts) {
   // anchors come from src/beats.js when a beats.json was passed: word starts
   // quantize to the beat grid, ends stay distributed. undefined = the old
   // even distribution, unchanged.
-  const words = wordTimings({ text, time: cueTime, end: cueEnd }, { anchors });
+  const words = wordTimings({ text, time: cueTime, end: cueEnd }, { anchors, fill: wordFill });
   if (words.length === 0) return text;
 
   const amount = Number(sizeVar) || 0;
@@ -425,11 +425,53 @@ function animatedWords(text, opts) {
     // reads as a chain of causes -- but it is also why the delay is fitted to
     // the cue's span before anything else asks for a time.
     const nWords = words.length;
-    const delay = depthLevel === "off" ? 0 : seqDelay(depthLevel, i, nWords, cueSpan);
-    const wStart = w.start + delay;
+    // --depth's sequenced reveal delays each word until the previous one has
+    // begun, but that delay is added to a word slot which may ALREADY be at the
+    // very end of the cue -- wordTimings() fills slots by sung character count,
+    // so the last word of a long line lands late by construction. Unclamped, the
+    // two add up and the last word begins after its cue ended, which is the
+    // "some words disappear" report. clampedSequence() is the single source of
+    // truth for that; the arithmetic and the measurement live in depth.js and
+    // check_depth.mjs rather than being restated here.
+    // The chain's budget reserves a readable window for the LAST word, so the
+    // slot of the final word is needed before the chain can be sized -- hence the
+    // second lookup rather than the one in hand. It is the last word that is
+    // tightest: its slot is placed last and the chain delays it the most, and
+    // nothing else in the line is competing for those same two effects.
+    const lastSlot = words[nWords - 1].start - cueStartTime;
+    const seq = clampedSequence(
+      depthLevel, i, nWords, cueSpan, w.start - cueStartTime,
+      chainBudget(cueSpan, wordFill, lastSlot)
+    );
+    const wStart = w.start + seq;
     const wAge = t - wStart;
     // progress through the word's own (delayed) slot, for the depth curve
     const wProg = w.end > wStart ? clamp01((t - wStart) / (w.end - wStart)) : 0;
+
+    // How late THIS word's own arrival is, relative to the start of the line.
+    //
+    // This is the number that makes the typed-on reveal correct, and it exists
+    // because the chain is indexed by a letter's position in the whole line while
+    // being evaluated against each word's own start. Those are two different
+    // clocks. Words are spread across the cue span AND `--depth`'s sequenced
+    // reveal delays each until the previous one has begun, so the last word can
+    // start seconds after the line did. Adding the line-wide letter index to that
+    // late start scheduled the last word's FIRST letter nearly a second after the
+    // word itself had arrived, and its LAST letter past the cue's end entirely --
+    // measured on Kali Kali, 15 of 48 cues, worst +0.16s.
+    //
+    // Subtracting the lag is the whole fix: a letter's absolute time becomes
+    // max(wordStart, lineIndex * step). The chain still sweeps the line in order
+    // at the same pace; no letter is ever scheduled before the word holding it is
+    // on screen. The LOOK is untouched -- same clip, same easing, same step --
+    // only the anchor moved.
+    //
+    // It also explains why the every-frame scan passed while this was broken. The
+    // scan measures INK against the cue window, and a letter clipped to zero
+    // width draws none -- so an unfinished word is INVISIBLE rather than lingering,
+    // and there is nothing past the cue's end for the scan to find. The bug was a
+    // MISSING word; the gate catches a word that stays too long.
+    const typeLag = wStart - cueStartTime;
 
     const dTrack = depthLevel === "off" ? 0 : trackFor(depthLevel, wAge, Math.max(0.001, w.end - wStart));
     const dBase = depthLevel === "off" ? 0 : baseFor(depthLevel, t - cueStartTime, cueSpan, seed, index);
@@ -446,7 +488,7 @@ function animatedWords(text, opts) {
     // seed and left alone. No `t` anywhere in it, which is the whole reason
     // colour cannot introduce a lingering lyric.
     // Declared BEFORE depthStyle because the glow is tinted with it.
-    const wc = wordColor(colorMode, seed, colorHue, index, i, { scheme: colorScheme });
+    const wc = wordColor(colorMode, seed, colorHue, index, i, { scheme: colorScheme, accent });
     const colorStyle = wc ? { color: wc.css } : {};
 
     const depthStyle = depthLevel === "off" ? {} : wordDepthStyle({
@@ -529,6 +571,7 @@ function animatedWords(text, opts) {
             wordColorObj: wc,
             // --cut and --type both act per letter, inside the word.
             cut, type, typeFit: tFit, typePlan: tPlan, letterBase: lettersBefore[i],
+            typeLag, typeSpan: cueSpan,
           })}
         </span>
       </React.Fragment>
@@ -646,7 +689,7 @@ function letterNodes(text, opts) {
           wordStart, colorMode = "off", colorHue = 210, colorScheme = "analogous",
           cueIndex = 0, wordOrdinal = 0, wordColorObj = null,
           cut = "off", type = "off", typeFit = null, typePlan = null,
-          letterBase = 0 } = opts;
+          letterBase = 0, typeLag = 0, typeSpan = 0 } = opts;
   const sizeOn = Number(letterSizeVar) > 0;
   const animOn = letterAnim && letterAnim !== "off";
   const colorLettersOn = levelHasLetterColor(colorMode) && !!wordColorObj;
@@ -683,15 +726,37 @@ function letterNodes(text, opts) {
       const cl = letterCut(cut, seed, cueIndex, wordOrdinal, i);
       if (cl) cutTransform = cl.transform;
     }
-    // --type: this letter's place in the typing chain. `letterBase` is how many
-    // graphemes precede this WORD, so the stagger continues across the word
-    // boundary instead of restarting -- otherwise the last letter of one word
-    // and the first of the next land on the same frame.
+    // How late THIS word's own arrival is, relative to the start of the LINE. It is
+    // computed in animatedWords() (where wStart is) and passed down through opts,
+    // because letterNodes() has no wStart of its own.
+    //
+    // Subtracting it is what makes a letter's absolute time
+    // max(wordStart, lineIndex * step) instead of the SUM of the two delays. See the
+    // long note where it is computed -- including why the every-frame scan passed
+    // while this was broken (the bug was a MISSING word, and the gate catches a
+    // word that stays too long).
+    const lag = Number(typeLag) || 0;
+
     if (typeOn) {
       const unitIndex = levelIsLetterwise(type)
         ? letterBase + i
         : wordOrdinal;
-      Object.assign(style, typingState(type, unitIndex, typeFit.step, typeFit.dur, elapsed));
+      const delay = Math.max(0, unitIndex * typeFit.step - lag);
+
+      // The per-unit duration is ALSO clamped to the time this word has left in
+      // the cue. The chain's own fit is computed from the LINE's start, so it
+      // guarantees the chain fits -- but not that any single unit finishes inside
+      // the cue, and a word can start very late. Kali Kali's
+      // "मेरो मनमा हुन्छ हलचल" starts its last word at 2.70s of a 2.98s cue,
+      // leaving 0.28s, while the `line` level asks each unit to take 0.55s: the
+      // word began typing and was cut off before it finished.
+      //
+      // Clamped rather than compressed-with-the-chain, because the chain fit is
+      // about the line and this is about one word's remaining time. And floored,
+      // so a word starting at or after the cue's end gets a positive duration
+      // rather than a negative one -- it simply never appears, which is correct.
+      const dur = Math.min(typeFit.dur, Math.max(0.001, (typeSpan || 0) - lag));
+      Object.assign(style, typingAt(type, delay, dur, elapsed));
     }
     if (animOn) Object.assign(style, letterState(letterAnim, elapsed, i));
     // The cut's rotation is COMPOSED with the letter animation's own transform,
@@ -849,7 +914,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill }) => {
   // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
   // render.mjs produced; null when there is none, and pulseGlow falls back to a
   // slow breath rather than to nothing.
@@ -873,7 +938,7 @@ export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, 
     else break;
   }
 
-  // The line just before, drifting away — reads as motion rather than a hard
+  // The line just before, drifting away â€” reads as motion rather than a hard
   // cut. Its own presentation is resolved separately below, which is what turns
   // a change of placement into a cross-fade between two layouts instead of the
   // text jumping.
@@ -986,6 +1051,36 @@ const presentationAt = (cueIndex) => {
   const place = roam ? "roam" : horizontal ? "horizontal" : vertical ? "vertical" : "center";
   return { id: place, place, unit: MODE_DEFAULT_UNIT, block: 0 };
 };
+
+// Per-word colour for a PHRASE unit, which builds no word spans of its own.
+//
+// A phrase presentation animates as one block and deliberately has no per-word
+// spans -- that is a real rule, and it is why word ANIMATION does not apply. But
+// COLOUR does not need the animation spans, and the first attempt at phrase-line
+// colour took the whole line's worth: `lineColor` gave every word the same hue,
+// which produced an entirely red sentence. That is not an accent and it is not
+// what was asked for; it is the palette applied to a phrase.
+//
+// So these spans carry a colour and NOTHING ELSE -- no transform, no opacity, no
+// per-word size. The line still enters and exits as one gesture, and one word
+// picked out of it is the entire effect.
+//
+// The split keeps the whitespace, because the line element is `white-space:
+// pre-wrap` and rejoining with single spaces would silently re-flow a lyric that
+// was exported with deliberate spacing.
+function colorSpans(text, seed, index, mode, hue, scheme, accent) {
+  const parts = String(text).split(/(\s+)/);
+  return parts.map((part, i) => {
+    if (!part || /^\s+$/.test(part)) return part;
+    // The word ORDINAL counts only real words, so adding or removing whitespace
+    // cannot shift which word gets the accent.
+    const ordinal = parts.slice(0, i).filter((p) => p && !/^\s+$/.test(p)).length;
+    const c = wordColor(mode, seed, hue, index, ordinal, { scheme, accent });
+    return c ? (
+      <span key={i} style={{ color: c.css }}>{part}</span>
+    ) : part;
+  });
+}
 
 const frameStyle = {
   // "transparent" = alpha overlay (mov / ProRes 4444). A colour like
@@ -1192,6 +1287,27 @@ function renderCue(cueObj, isPrev, life) {
   const bandWidth = g.kind === "roam" ? 60 : g.width;
   const shown = g.kind === "roam" ? size : fit(cueObj.text, size, bandWidth);
 
+  // Resolved BEFORE `content`, and not merely for tidiness: the first version
+  // declared these below the content block and every render died with
+  // "Cannot access 'accent' before initialization" -- a temporal dead zone error
+  // thrown from inside the composition, which Remotion reports as a frame number
+  // and no stack. Three of these values are needed by `content` itself.
+  //
+  // --cut / --color-mode on a PHRASE unit, which has no word spans.
+  //
+  // Colour is NOT taken from the line as a whole. The first version called
+  // lineColor() for the line's colour, which gave every word the same hue -- an
+  // entirely red sentence, which is a palette applied to a phrase rather than an
+  // accent inside one, and the opposite of what was asked for.
+  //
+  // Cut still applies as ONE angle for the whole line, because a phrase line is
+  // one piece of paper. Colour is the only thing that goes per word.
+  const lineHue = Number.isFinite(Number(colorHue)) ? Number(colorHue) : 210;
+  const accent = Number.isFinite(Number(colorAccent)) ? Number(colorAccent) : 1;
+  const grad = colorOn && colorGradient
+    ? gradientCss(colorMode, colorScheme, master, lineHue, cueObj.index)
+    : null;
+
   const content = spans
     ? animatedWords(cueObj.text, {
         seed: master, index: cueObj.index, anim, sizeMode, sizeVar, t, sizeDrift,
@@ -1206,24 +1322,35 @@ function renderCue(cueObj, isPrev, life) {
         // prop arrives as undefined, and `undefined` must not be a colour level.
         colorMode: colorOn ? colorMode : "off",
         colorHue: Number.isFinite(Number(colorHue)) ? Number(colorHue) : 210,
-        colorScheme, cut, type, stroke, strokeColor, baseSize: shown,
+        // `typeLag` is NOT passed in from here. It is a per-WORD quantity -- it depends
+        // on that word's own start, which animatedWords() computes -- so passing
+        // one value for the whole line would be meaningless. It flows DOWN from
+        // there to letterNodes(). It was listed here by mistake, and the
+        // resulting ReferenceError is thrown from inside the composition, which
+        // Remotion reports as a bare frame number with no stack and no file.
+        colorScheme, cut, type, stroke, strokeColor, baseSize: shown, accent,
+        wordFill,
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)
-      : cueObj.text;
+      : colorOn && !grad
+        // A phrase unit still gets PER-WORD colour -- just not the animation
+        // spans. See colorSpans(): colour and animation have different
+        // requirements, and coupling them meant a whole sentence came out one
+        // colour.
+        ? colorSpans(cueObj.text, master, cueObj.index, colorMode, lineHue, colorScheme, accent)
+        : cueObj.text;
 
   // --cut / --color-mode on a PHRASE unit, which has no word spans.
   //
-  // This block exists because the first version of colour only painted word
-  // spans. Phrase presentations deliberately build none, so with `--mode mix
-  // --mix-block 8` the first three blocks of a 48-line song rendered in plain
-  // white while the last three were coloured -- no error, no warning, and a
-  // plausible-looking file. Nothing but looking at a frame finds that.
-  const lineHue = Number.isFinite(Number(colorHue)) ? Number(colorHue) : 210;
-  const lc = colorOn ? lineColor(colorMode, colorScheme, master, lineHue, cueObj.index) : null;
-  const grad = colorOn && colorGradient
-    ? gradientCss(colorMode, colorScheme, master, lineHue, cueObj.index)
-    : null;
+  // Colour is NOT taken from the line as a whole. The first version called
+  // lineColor() here, which gave every word of the line the same hue -- an
+  // entirely red sentence, which is a palette applied to a phrase rather than an
+  // accent inside one, and the opposite of what was asked for.
+  //
+  // Cut still applies as ONE angle for the whole line, because a phrase line is
+  // one piece of paper. Colour is the only thing that goes per word.
+  const lc = colorOn && grad ? lineColor(colorMode, colorScheme, master, lineHue, cueObj.index) : null;
   // A phrase line gets ONE cut angle, because it is one clipping.
   const phraseCut = cutOn ? wordCut(cut, master, cueObj.index, 0, fontSize) : null;
   const phraseCutT = phraseCut ? wordCutTransform(phraseCut) : "";
@@ -1232,8 +1359,11 @@ function renderCue(cueObj, isPrev, life) {
     fontFamily: FONT_FAMILY,
     fontWeight: 700,
     ...(LEGACY_FONT_FAMILY ? { fontWeight: 400 } : {}),
-    // Colour: the per-word colour when there are spans, otherwise the line's.
-    color: lc ? lc.css : color,
+    // Colour: the per-word colour when there are spans, otherwise the line's own
+    // colour -- which is only a fallback when a GRADIENT is on, since the gradient
+    // supplies its own stops. A plain phrase line gets per-word colour from
+    // colorSpans() above and never reaches here with a colour of its own.
+    color: lc && grad ? lc.css : color,
     ...(grad
       ? {
         // background-clip: text paints a gradient through the glyphs without

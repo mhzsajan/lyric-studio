@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Composition, staticFile } from "remotion";
 import { getAudioDurationInSeconds } from "@remotion/media-utils";
 import { parseLrc } from "./parse-lrc.mjs";
@@ -118,6 +118,12 @@ const BASE_DEFAULTS = {
   // Word-by-word animation: "off" animates whole lines, otherwise each word is
   // scheduled across the cue and animates as it arrives.
   wordAnim: "off",
+  // Fraction of each cue's span the words are laid across. The remainder is a
+  // HOLD: the finished line sits readable before the next one arrives, which is
+  // the same interval as the gap before the upcoming word seen from its other
+  // end. null means WORD_FILL in word-timing.js, so there is exactly one default
+  // and it lives beside the measurement that chose it.
+  wordFill: null,
   // Title and band, read from the .lrc's [ti:] and [ar:].
   title: parsed.title || "",
   band: parsed.band || "",
@@ -145,6 +151,10 @@ const BASE_DEFAULTS = {
   // A gradient painted across a phrase line. One property, no span per letter,
   // and no effect on glyph geometry -- so it cannot step the shirorekha.
   colorGradient: false,
+  // --color-accent: how OFTEN the accent colour is dealt, 0..1. At 1.0 a duo line
+  // is half red and half white, which is a coloured sentence rather than an
+  // accent. Lower values make the accent the exception.
+  colorAccent: 1,
   // --cut: the newspaper / cut-paper look. Each word a clipping at its own angle
   // and height with a torn edge. Off by default because it deliberately breaks
   // the formation, which is a look, and a look nobody chose cannot be asked for

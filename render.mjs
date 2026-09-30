@@ -830,10 +830,22 @@ async function run(audioPath, lrcPath) {
     // The font gate runs BEFORE the transcode and long before the render: a
     // song the layout cannot write should fail in seconds with the affected
     // words named, not after a four-minute encode with wrong letters baked in.
-    if (slug || layoutFile) {
+    //
+    // It used to run ONLY when a layout file existed, which meant it was skipped
+    // for exactly the fonts that need it most. A PREETI font has no layout file
+    // by definition -- it speaks the built-in Preeti map -- so `--legacy-font
+    // foo.ttf` with no `--layout-file` printed a warning and rendered unchecked.
+    // That is the class where a word silently comes out in two typefaces, and it
+    // is 77 of the 214 fonts.
+    //
+    // So the fallback layout is now GATED rather than merely warned about, and
+    // --also-emitted-keys adds the second half: the shared Preeti layout says
+    // nothing about whether THIS font carries every key the encoder emits.
+    const gateLayout = slug ? null : (layoutFile || LEGACY_LAYOUT);
+    if (slug || gateLayout) {
       const gateArgs = slug
         ? ["--slug", FONT_SLUG, "--fonts-repo", FONTS_REPO]
-        : ["--layout", layoutFile];
+        : ["--layout", gateLayout, "--font-file", LEGACY_FONT, "--also-emitted-keys"];
       if (!runFontGate(lrcPath, gateArgs)) {
         process.exitCode = 1;
         return;
@@ -844,8 +856,7 @@ async function run(audioPath, lrcPath) {
       if (slug) reportFontVerdict(slug);
     } else {
       console.warn(
-        "  note: --legacy-font with no --layout-file falls back to the Preeti\n" +
-        "        map, and the font gate cannot run without a layout. If this\n" +
+        "  note: --legacy-font with no layout -- the font gate could not run. If this\n" +
         "        font is not Preeti-layout the words render wrong with no\n" +
         "        error. Prefer --font-slug: the font repo resolves the layout\n" +
         "        AND gates the song."
@@ -1383,6 +1394,38 @@ async function run(audioPath, lrcPath) {
       " chromatic, glow)");
   }
 
+  // --word-fill: how much of each cue's span the words are laid across. The rest
+  // is a HOLD before the next line -- the gap the reader needs, and the reason a
+  // line does not start arriving as the previous one dies.
+  //
+  // Unlike every other default in this file this one is ON, because the failure it
+  // prevents is a dropped word rather than a look nobody chose. Measured across all
+  // seven songs with the words laid across the full span, 146 of 450 cues gave
+  // their last word under 0.33s on screen and 118 gave it under 0.20s; the tightest
+  // was one single frame. A word with one frame reads on screen as a typo.
+  //
+  // --word-fill 1 restores the old behaviour and is not an error: it is what you
+  // want to compare against, and some lines legitimately want no hold.
+  const wordFillArg = flag("--word-fill");
+  if (wordFillArg != null) {
+    const wf = Number(wordFillArg);
+    if (!Number.isFinite(wf) || wf <= 0 || wf > 1) {
+      console.error('  --word-fill must be a number greater than 0 and at most 1' +
+                    ' (the fraction of each cue the words occupy). Got "' +
+                    wordFillArg + '".');
+      process.exitCode = 1;
+      return;
+    }
+    props.wordFill = wf;
+    console.log("  word fill: " + wf.toFixed(2) +
+      " of each cue, " + (1 - wf).toFixed(2) + " held before the next line");
+  } else {
+    // Explicit null, so the composition resolves WORD_FILL itself. Passing the
+    // number from here would be a second default in a second file, and the two
+    // would drift the first time one of them changed.
+    props.wordFill = null;
+  }
+
   // --color-mode: per-word and per-letter COLOUR (src/color.js).
   //
   // Off by default, for the same reason --depth is: a colour nobody chose is a
@@ -1420,6 +1463,26 @@ async function run(audioPath, lrcPath) {
   // on the line element -- the cheapest colour effect here, and the one that
   // needs no span per letter at all.
   props.colorGradient = has("--color-gradient");
+  // --color-accent: HOW OFTEN the accent colour is dealt at all, 0..1.
+  //
+  // At 1.0 a `duo` line deals red and white in equal measure, which is a
+  // COLOURED SENTENCE with white in it -- a palette applied to a line, not an
+  // accent inside one. Lower values make the accent the exception: at 0.2 roughly
+  // one word in five is picked out and the rest stay white.
+  //
+  // Seeded per word, so a song accents the SAME words on every render and in both
+  // of its versions. A version whose accent words moved would not be the same
+  // song twice.
+  const accentRaw = numFlag("--color-accent");
+  props.colorAccent = Number.isFinite(accentRaw)
+    ? Math.min(Math.max(accentRaw, 0), 1)
+    : 1;
+  if (colorArg !== "off" && props.colorAccent < 1) {
+    console.log(
+      "  accent   : " + (props.colorAccent * 100).toFixed(0) +
+      "% of words take the accent colour, the rest stay white"
+    );
+  }
   // --color-hue: the palette's anchor, in degrees. Without it every word drifts
   // around 0deg, which is red and reads as an error rather than a palette. 210 is
   // a cool cyan-blue, which sits well over most footage; any degree is accepted.
@@ -2055,6 +2118,14 @@ if (BATCH) {
       "    --size-preset <n> small | medium | large -- the three sizes judged",
       "                      on Kali Kali. medium is the house default; any",
       "                      explicit --size/--size-var/--size-drift wins.",
+      "    --word-fill <f>  fraction of each cue the words occupy (default",
+      "                      0.78). The rest is a hold: the finished line sits",
+      "                      readable before the next arrives, which is the gap",
+      "                      before the upcoming word. 1 = the old behaviour, no",
+      "                      hold. Laying words across the full span starved the",
+      "                      last word of most of its screen time -- 146 of 450",
+      "                      cues across the seven songs -- so this is on by",
+      "                      default. See WORD_FILL in src/word-timing.js.",
       "    --cut <m>     off (default) | word | letter -- the newspaper look:",
       "                      every word a clipping at its own angle and height",
       "                      with a torn edge. `letter` adds per-letter",

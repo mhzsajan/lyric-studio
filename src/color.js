@@ -272,7 +272,26 @@ export function wordColor(level, seed, baseHue, cueIndex, wordIndex, opts) {
   // stops two neighbouring words landing on the same colour -- which is why this
   // is not a per-word draw any more. wordIndex is the only thing it needs.
   const palette = linePalette(level, scheme, seed, baseHue, cueIndex, wordIndex + 1);
-  const slot = palette[wordIndex];
+  let slot = palette[wordIndex];
+
+  // --color-accent: HOW OFTEN the accent colour is dealt at all.
+  //
+  // The request this answers is "I don't want the whole sentence coloured, I
+  // want one word or letter sometimes". At accent 1.0 a `duo` line deals red and
+  // white in equal measure, which is a coloured sentence with white in it -- not
+  // an accent. Below 1.0 most words come out white and the accent is the
+  // exception, which is what makes it read as one word picked out rather than a
+  // palette applied.
+  //
+  // The draw is seeded per word, so a given song always accents the same words.
+  // A line's accent words therefore stay put across re-renders and across the
+  // two versions of a song, which matters: a version that moved its accent words
+  // would not be the same song twice.
+  const accent = opts && Number.isFinite(opts.accent) ? Math.min(Math.max(opts.accent, 0), 1) : 1;
+  if (accent < 1 && !isWhiteSlot(slot)) {
+    const keep = unit(`${seed}:C${cueIndex}:w${wordIndex}:accent`, 0);
+    if (keep > accent) slot = "W";
+  }
 
   // The slot may be the achromatic WHITE one, in which case slotHsl pins it and
   // there is no random lightness to draw. Everything else draws sat and light
@@ -282,7 +301,7 @@ export function wordColor(level, seed, baseHue, cueIndex, wordIndex, opts) {
   const white = isWhiteSlot(slot);
 
   return {
-    hue, sat, light, white, duo: scheme === 'duo',
+    hue, sat, light, white, duo: scheme === "duo",
     css: hslCss(hue, sat, light),
     rgb: hslRgbTriple(hue, sat, light),
   };

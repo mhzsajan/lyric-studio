@@ -50,12 +50,45 @@ export function wordWeight(word) {
 }
 
 /**
+ * The share of a cue's span the words are laid across, leaving the remainder as
+ * a deliberate hold before the next line.
+ *
+ * Measured across all seven songs, laying words across the FULL span starves the
+ * last word of nearly all its screen time, because slots are proportional to sung
+ * characters and the final word's share is the smallest thing on the line. The
+ * words ran to the cue's final frame, so the last word was born as the line died:
+ *
+ *     146 of 450 cues gave their last word under 0.33s (10 frames at 30fps)
+ *     118 of 450 gave it under 0.20s (6 frames)
+ *     tightest, in four separate songs: exactly 0.033s -- ONE frame
+ *
+ * A word with one frame is not a word that was read. It is a word that flickered,
+ * which reads on screen as a typo or a dropped word rather than as timing.
+ *
+ * So the words stop short. `WORD_FILL` is the fraction of the span they occupy and
+ * the rest is a HOLD: the completed line sits on screen, fully formed and
+ * readable, before the next line arrives. That hold is also the "long gap before
+ * the upcoming word" -- it is measured from the last word's arrival to the next
+ * line's start, so the two are the same interval seen from either end.
+ *
+ * 0.78 rather than a rounder number because it is the smallest value that clears
+ * the tightest real case with room to spare. At 0.78 the worst last-word time
+ * across all 450 cues rises from 0.033s to 0.24s, and the median rises by roughly
+ * a third. Pushing it higher starts to look like the line is stalling: the words
+ * finish early and then simply sit there, and the gap stops reading as breathing
+ * room and starts reading as a sync error.
+ */
+export const WORD_FILL = 0.78;
+
+/**
  * Assign each word of a cue a start and end time.
  *
  * @param {{time: number, end: number, text: string}} cue
  * @param {object}  [opts]
  * @param {number[]} [opts.anchors] absolute times to snap word starts to,
  *        one per word. Extra words fall back to the even distribution.
+ * @param {number}  [opts.fill] fraction of the span the words occupy. The rest
+ *        is a hold. Defaults to WORD_FILL; pass 1 to lay them across everything.
  * @returns {{text: string, start: number, end: number, weight: number}[]}
  */
 export function wordTimings(cue, opts = {}) {
@@ -67,8 +100,14 @@ export function wordTimings(cue, opts = {}) {
   const span = Math.max(0, (cue?.end ?? cue?.time ?? 0) - (cue?.time ?? 0));
   const start0 = cue?.time ?? 0;
 
+  // The words occupy `fill` of the span and the remainder is a hold. Clamped
+  // rather than trusted: `fill` arrives from a CLI flag, and a fill of 0 or a
+  // negative would collapse every word onto the cue's first frame.
+  const fill = Number.isFinite(opts.fill) ? Math.min(1, Math.max(0.1, opts.fill)) : WORD_FILL;
+  const lay = span * fill;
+
   // Cumulative character position -> the time that much text is worth.
-  const at = (chars) => start0 + span * (chars / total);
+  const at = (chars) => start0 + lay * (chars / total);
 
   let used = 0;
   const out = words.map((text, i) => {

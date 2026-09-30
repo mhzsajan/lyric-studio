@@ -1,3 +1,5 @@
+import { WORD_FILL } from "./word-timing.js";
+
 // depth.js -- the SEVEN new motion layers: composition, not just variation.
 //
 // WHY A SEPARATE FILE
@@ -202,28 +204,133 @@ export function depth(level, progress) {
  * that, so the last word would still be arriving when the line ends. That is
  * the lingering-lyric bug, arrived at through a different door.
  *
- * So the chain is fitted to the cue's own span:
+ * So the chain is fitted to the budget it is spending from:
  *
  *     total = n * step                       (what it would cost)
- *     step  = min(step, (span * 0.55) / n)    (what the line can afford)
+ *     step  = min(step, (budget * 0.55) / n)  (what the line can afford)
  *
  * so the chain always completes inside the line, and a long chorus line keeps
  * the full deliberate stagger while a fast interjection tightens. The effect
  * degrades in TAIL, never in correctness.
+ *
+ * `budget` defaults to the cue's span, and the default is the right answer only
+ * when the words are laid across that same span. They are not: `wordTimings()`
+ * lays them across `WORD_FILL` of it and holds the rest. The chain was still
+ * being sized against the full span while the words it delays had already been
+ * packed into 78% of it, so the two were spending the same seconds twice.
+ *
+ * That is not a rounding error. On Jam Na Maya Jam's "जाम न माया जाम" -- a 1.34s
+ * cue -- the chain wanted 0.42s and the last word was left 0.16s, about five
+ * frames, which is a flicker and not a word. Sizing the chain against the window
+ * the words actually occupy is what turns those five frames back into a readable
+ * hold. Pass `budget = span * WORD_FILL` and the same chain is asked to fit the
+ * space it is really in.
  */
-export function sequence(level, i, n, span) {
+export function sequence(level, i, n, span, budget) {
   if (level === "off" || n <= 1) return 0;
   const want = level === "wild" ? 0.14 : level === "vivid" ? 0.10 : 0.07;
-  const afford = span * 0.55;
+  const afford = (Number.isFinite(budget) ? budget : span) * 0.55;
   const step = Math.min(want, afford / n);
   return i * step;
 }
 
 /** The step the chain used, so the caller can show it and the test can assert it. */
-export function sequenceStep(level, n, span) {
+export function sequenceStep(level, n, span, budget) {
   if (level === "off" || n <= 1) return 0;
   const want = level === "wild" ? 0.14 : level === "vivid" ? 0.10 : 0.07;
-  return Math.min(want, (span * 0.55) / n);
+  return Math.min(want, ((Number.isFinite(budget) ? budget : span) * 0.55) / n);
+}
+
+/**
+ * The MINIMUM time a word must be on screen to count as having appeared.
+ *
+ * At 30 fps a word needs at least one whole frame to be seen at all, and a word
+ * that appears and vanishes inside a single frame interval was never drawn --
+ * that is the "some words disappear" report. 1/30s is one frame; the constant is
+ * named from fps so the number is legible as what it is.
+ */
+export const MIN_WORD_FRAMES = 1 / 30;
+
+/**
+ * When a word actually appears, given its slot and the sequenced delay.
+ *
+ * `sequence()` alone cannot be trusted to keep a word inside its cue, and this is
+ * the second half of why. The sequence is fitted to the cue's span in isolation:
+ * it promises the CHAIN costs at most 55% of the span. It says nothing about the
+ * word's own slot, which `wordTimings()` fills proportionally to sung characters
+ * and therefore places the last word of a long line very close to the end. Add
+ * the two and the last word starts after its cue has already ended.
+ *
+ * Measured on Jam Na Maya Jam, "जाम न माया जाम": four words, 1.34s cue. The last
+ * word's slot opens at 1.31s, the sequence wanted to add 0.08s, and it began at
+ * 1.39s -- never drawn. 42 of that song's 74 cues had at least one word in this
+ * state.
+ *
+ * Two failures need opposite answers, which is why this is a CLAMP and not a
+ * shorter delay:
+ *
+ *   the SEQUENCE should not add time the line cannot spare  -> it compresses,
+ *     which `sequence()` already does, and
+ *   the WORD's own slot may already be at the very end         -> clamped here.
+ *
+ * A word that starts at its cue's end has no time to be seen, so the target is
+ * not `cueEnd` but `cueEnd - MIN_WORD_FRAMES`: the last instant that still shows
+ * a frame of it. Returned in the same units as `wordStart`, so the caller adds
+ * the returned delay to an absolute time without converting anything.
+ *
+ * This is deliberately not a redistribution. Pulling the last word earlier would
+ * make it overlap the word before it and break the shirorekha; shrinking the
+ * sequence for the whole line would penalise words that had plenty of room. The
+ * delay is trimmed for exactly the word that needs it and no other.
+ */
+export function clampedSequence(level, i, n, span, slotOffset, budget) {
+  const raw = sequence(level, i, n, span, budget);
+  if (level === "off" || n <= 1) return 0;
+  // A word whose own slot is already this late cannot afford any delay at all.
+  const room = span - slotOffset - MIN_WORD_FRAMES;
+  if (room <= 0) return 0;
+  return Math.min(raw, room);
+}
+
+/**
+ * The budget the chain and the word slots are both spending from: the window the
+ * words are actually laid across, which is the cue's span times `WORD_FILL`.
+ *
+ * Both consumers need it and they must agree. `sequence()` sizes the chain and
+ * `wordTimings()` places the slots; if one is handed the full span and the other
+ * the fill window, they are drawing on the same seconds twice and the last word
+ * pays for it. Exported as a function rather than left as arithmetic at the call
+ * site so the two cannot drift apart in a future edit.
+ *
+ * `lastSlot` is where the final word's slot begins, relative to the cue's start.
+ * Pass it and the budget also reserves a readable window for that word; omit it
+ * and you get the purely aesthetic limit, which is what a caller that has not yet
+ * computed the slots wants.
+ */
+export function chainBudget(span, fill, lastSlot) {
+  const f = Number.isFinite(fill) ? Math.min(1, Math.max(0.1, fill)) : WORD_FILL;
+  // Two independent limits, and taking the smaller of them is the point.
+  //
+  // The first is aesthetic: the chain is a staggering effect, so it should not
+  // spend more than a share of the window the words occupy. Long lines keep the
+  // full deliberate step and fast interjections tighten.
+  //
+  // The second is correctness, and it is the one the first one was missing. The
+  // last word is the tightest thing on the line, because its slot is placed last
+  // AND the chain delays it the most -- the two pile onto the same word. Nothing
+  // else in the chain knows that, so without this term a short line with several
+  // words spends its whole budget on a stagger and leaves the last word a
+  // flicker. Jam Na Maya Jam's "जाम न माया जाम" is 1.34s: even at the house fill
+  // and a compressed chain the last word was left 0.16s, five frames.
+  //
+  // Reserving a readable window for it is not the same as shortening the chain
+  // globally. A long chorus line has room for both and is untouched by the
+  // second limit; only lines where the two genuinely conflict are affected, and
+  // on those the word being readable wins over the stagger being long.
+  const aesthetic = span * f * 0.55;
+  if (!Number.isFinite(lastSlot)) return aesthetic;
+  const correctness = span - lastSlot - MIN_WORD_FRAMES * 10;
+  return Math.max(0, Math.min(aesthetic, correctness));
 }
 
 // ---------------------------------------------------------------------------

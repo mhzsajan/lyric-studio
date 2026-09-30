@@ -34,8 +34,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   tracking, baseline, arc, depth, sequence, sequenceStep, chromatic,
-  pulseGlow, wordDepthStyle, DEPTH_LEVELS,
+  pulseGlow, wordDepthStyle, clampedSequence, chainBudget, MIN_WORD_FRAMES,
+  DEPTH_LEVELS,
 } from "../src/depth.js";
+import { wordTimings } from "../src/word-timing.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(path.join(HERE, "..", "src", "depth.js"), "utf8");
@@ -201,6 +203,144 @@ console.log("\n=== 7. the glow falls back rather than dying ===");
   const quiet = pulseGlow("vivid", 0, 0.5, 2);
   const loud = pulseGlow("vivid", 1, 0.5, 2);
   ok(loud > quiet, "louder audio gives more glow", N(quiet) + " -> " + N(loud));
+}
+
+console.log("\n=== 8. A WORD MUST ACTUALLY APPEAR (the \"words disappear\" bug) ===");
+// Section 2 proves the CHAIN fits the span. It passed for a long time while the
+// video was visibly dropping words, because it is the wrong claim.
+//
+// sequence() is fitted in isolation. It promises the chain costs at most 55% of
+// the span. It never looks at where any individual word's slot sits -- and
+// wordTimings() places slots by sung character count, so the LAST word of a long
+// line is late by construction. Add the two and the last word starts after its
+// cue has ended. Clamping only against cueEnd is still not enough, because a word
+// that starts exactly at the end is never drawn: that is the whole report.
+//
+// These are the real measurements, not a synthetic curve, and both were drawn
+// from actual songs. Every one of them FAILED before clampedSequence() existed.
+{
+  // Measured on Jam Na Maya Jam, "जाम न माया जाम": 4 words, 1.34s cue.
+  //
+  // The slot is read from wordTimings rather than typed in, because a hand-copied
+  // number in a timing test is a number that silently stops being true. The first
+  // version hardcoded 1.31s and "passed" against a real slot of 0.975s.
+  //
+  // It is measured at fill:1 -- words laid across the WHOLE span -- because that
+  // is the case the clamp exists for. At the house fill this cue no longer needs
+  // the clamp at all, which is the point: the fill is the fix and the clamp is the
+  // floor under it, for the slots fill cannot reach (anchored word times, and any
+  // render that passes --word-fill 1).
+  const jamCue = { text: "जाम न माया जाम", time: 100, end: 100 + 1.34 };
+  const jamSpan = jamCue.end - jamCue.time;
+  const jamWords = wordTimings(jamCue, { fill: 1 });
+  const jamSlot = jamWords[jamWords.length - 1].start - jamCue.time;
+  const rawJam = sequence("wild", jamWords.length - 1, jamWords.length, jamSpan);
+  const newJam = clampedSequence("wild", jamWords.length - 1, jamWords.length, jamSpan, jamSlot);
+  ok(rawJam + jamSlot > jamSpan,
+    "at fill 1 the raw sequence puts the last word past the end of its cue",
+    `slot ${N(jamSlot)}s + ${N(rawJam)}s = ${N(jamSlot + rawJam)}s in a ${jamSpan}s cue`);
+  ok(newJam < rawJam && jamSlot + newJam <= jamSpan,
+    "and the clamp is what brings it back inside",
+    `delay cut ${N(rawJam)}s -> ${N(newJam)}s, starts at ${N(jamSlot + newJam)}s`);
+
+  // And the house fill is the primary fix: it must leave the last word real time
+  // WITHOUT the clamp, so a regression in the fill is caught here rather than
+  // being quietly absorbed by the clamp and read as working.
+  const filledSlot = wordTimings(jamCue, {})[jamWords.length - 1].start - jamCue.time;
+  const rawFilled = sequence("wild", jamWords.length - 1, jamWords.length, jamSpan);
+  ok(rawFilled + filledSlot < jamSpan,
+    "at the house fill the last word has room even before the clamp",
+    `starts ${N(filledSlot + rawFilled)}s, ${N(jamSpan - filledSlot - rawFilled)}s visible, in a ${jamSpan}s cue`);
+
+  // The whole corpus shape, walked the way the render walks it: real wordTimings
+  // slots, real cue spans, the real levels. This is the assertion that generalises
+  // past the one cue that was reported.
+  // Both fills are walked, because they fail differently. At fill 1 the clamp is
+  // the only thing standing between a word and being invisible. At the house fill
+  // the clamp should be idle, and a word can still be starved -- so the house-fill
+  // rows assert a REAL reading floor, not one frame. Ten frames is the threshold
+  // because below it the word reads as a flicker rather than as a word.
+  const CASES = [
+    { text: "जाम न माया जाम", span: 1.34 },
+    { text: "काली काली हिस्सी परेकी", span: 3.07 },
+    { text: "मेरो मनमा हुन्छ हलचल", span: 2.98 },
+    { text: "हेर न कस्तो आँखा तरेकी", span: 3.52 },
+    { text: "रिसले हो कि खुसीले..", span: 3.60 },
+    { text: "बुझ्नै सकिन मैले..", span: 2.65 },
+  ];
+  const READABLE = 10 / 30;
+  for (const [label, fill, floor] of [
+    ["at fill 1, the clamp alone", 1, MIN_WORD_FRAMES],
+    ["at the house fill, a word must be readable", undefined, READABLE],
+  ]) {
+    let lost = null;
+    let worstLeft = Infinity;
+    for (const level of ["calm", "vivid", "wild"]) {
+      for (const c of CASES) {
+        const words = wordTimings({ text: c.text, time: 100, end: 100 + c.span },
+                                  fill === undefined ? {} : { fill });
+        words.forEach((w, i) => {
+          const slot = w.start - 100;
+          const d = clampedSequence(level, i, words.length, c.span, slot,
+                                     chainBudget(c.span, fill,
+                                                 words[words.length - 1].start - 100));
+          const start = slot + d;
+          const left = c.span - start;
+          if (left < worstLeft) worstLeft = left;
+          if (left < floor - 1e-9) {
+            lost = lost + `${level} "${c.text}" w${i}: ${N(left)}s on screen`;
+          }
+          if (start < slot - 1e-9) {
+            lost = lost + `${level} "${c.text}" w${i}: pulled BEFORE its slot`;
+          }
+        });
+      }
+    }
+    ok(!lost, label,
+      lost || `${CASES.length} lines x 3 levels, tightest word had ${N(worstLeft)}s` +
+              ` (floor ${N(floor)}s)`);
+  }
+
+  // The hold is real: the words must finish BEFORE the cue ends, not merely not
+  // overrun it. A fill of 1 would also satisfy every assertion above while leaving
+  // the reader no pause at all, which is the other half of the complaint.
+  {
+    const c = { text: "हेर न कस्तो आँखा तरेकी", time: 100, end: 100 + 3.52 };
+    const laid = wordTimings(c, {});
+    const lastEnd = laid[laid.length - 1].end - c.time;
+    ok(lastEnd < 3.52 - 0.2,
+      "the house fill leaves a visible hold before the next line",
+      `last word ends at ${N(lastEnd)}s of a ${N(3.52)}s cue, ${N(3.52 - lastEnd)}s hold`);
+    const full = wordTimings(c, { fill: 1 });
+    ok(Math.abs(full[full.length - 1].end - c.time - 3.52) < 1e-9,
+      "fill 1 is still reachable and still means 'no hold' -- the default is a choice",
+      "last word ends exactly at the cue's end");
+  }
+
+  // The clamp must not fire on a line that had room. A clamp that trims every
+  // delay would satisfy the assertion above while quietly removing --depth.
+  const roomy = { span: 4.0, n: 3 };
+  const unclamped = sequence("wild", 1, roomy.n, roomy.span);
+  const kept = clampedSequence("wild", 1, roomy.n, roomy.span, 0.5);
+  ok(Math.abs(kept - unclamped) < 1e-9,
+    "a word with room keeps its FULL sequence delay -- the clamp is a clamp",
+    `${N(unclamped)}s kept`);
+
+  // off stays off, and a one-word line has no sequence to clamp.
+  ok(clampedSequence("off", 2, 4, 1.34, 1.31) === 0, "off adds no delay to clamp");
+  ok(clampedSequence("wild", 0, 1, 1.34, 0.9) === 0, "a one-word line has no sequence");
+
+  // Never negative, even given a slot beyond the end -- which wordTimings can
+  // produce for an anchored line, and which a negative delay would turn into a
+  // word drawn BEFORE its slot.
+  ok(clampedSequence("wild", 3, 4, 1.34, 5.0) === 0,
+    "a slot past the end clamps to zero delay, never to a negative one");
+
+  // And the render must actually call it. A clamp that lives in depth.js and is
+  // never wired in fixes nothing; this is the gotcha-31 shape, one layer down.
+  ok(/clampedSequence\(\s*\n?\s*depthLevel/.test(SRC.replace(/\s+/g, " ")) === false &&
+     /clampedSequence/.test(readFileSync(path.join(HERE, "..", "src", "LyricOverlay.jsx"), "utf8")),
+    "LyricOverlay calls clampedSequence, so the clamp is in the render path");
 }
 
 console.log(failed ? "\n  " + failed + " CHECK(S) FAILED\n" : "\n  all depth checks passed\n");
