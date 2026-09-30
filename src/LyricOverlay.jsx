@@ -334,11 +334,25 @@ function letterNodes(text, opts) {
   });
 }
 
+/** easeOutBounce -- the drop-bounce landing curve (standard formulation). */
+function outBounce(x) {
+  const n1 = 7.5625, d1 = 2.75;
+  if (x < 1 / d1) return n1 * x * x;
+  if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+  if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+  return n1 * (x -= 2.625 / d1) * x + 0.984375;
+}
+
 /**
  * Compute the visual state of one cue at time t.
  * Exported so the still/contact-sheet renderer can reuse it without React.
+ *
+ * p = 0..1 through the entrance, q = 0..1 through the exit, j = 0..1 jitter,
+ * life = seconds since the cue started (drives the persistent-life styles;
+ * omitted by callers that render a static still, which freezes them mid-air
+ * at a harmless phase).
  */
-export function cueStyle(style, p, q, j) {
+export function cueStyle(style, p, q, j, life = 0) {
   // p = 0..1 through the entrance, q = 0..1 through the exit, j = 0..1 jitter
   const inE = easeOut(p);
   const outE = easeIn(q);
@@ -380,6 +394,71 @@ export function cueStyle(style, p, q, j) {
       // carries the glow; scale eases from slightly larger (light gathering).
       s.textShadow = `0 0 ${(18 + j * 14).toFixed(1)}px rgba(255,255,255,0.95), 0 0 ${(60 + j * 40).toFixed(1)}px rgba(255,255,255,0.55)`;
       s.transform = `scale(${(1.04 - 0.04 * inE).toFixed(4)})`;
+      break;
+    // -- choreographed entrances -------------------------------------------
+    case "spring": {
+      // Critically-damped-ish spring: starts small, overshoots ~8% and
+      // settles. The exponential envelope keeps it deterministic per frame.
+      const u = 1 - Math.exp(-5.5 * p);
+      const over = Math.sin(p * Math.PI * 2.2) * Math.exp(-4 * p) * 0.18;
+      s.transform = `scale(${(0.7 + 0.3 * u + over).toFixed(4)})`;
+      break;
+    }
+    case "swing": {
+      // Released off-centre like a hanging sign: drops in while rotating
+      // home, with one small counter-swing baked into the easing tail.
+      const rot = (1 - inE) * -(14 + j * 8) + Math.sin(p * 6.5) * (1 - p) * 4;
+      s.transform = `translateY(${((1 - inE) * -34).toFixed(1)}px) rotate(${rot.toFixed(2)}deg)`;
+      break;
+    }
+    case "flip-in":
+      s.transform = `perspective(900px) rotateX(${((1 - inE) * -80).toFixed(1)}deg)`;
+      s.opacity = Math.min(1, opacity * (0.4 + 0.6 * inE));
+      break;
+    case "float-up":
+      s.transform = `translateY(${((1 - inE) * 30).toFixed(1)}px)`;
+      s.filter = `blur(${((1 - inE) * 6).toFixed(1)}px)`;
+      break;
+    case "drop-bounce": {
+      // Falls from above and bounces to rest (easeOutBounce on the fall).
+      const drop = 1 - outBounce(clamp01(p * 1.15));
+      s.transform = `translateY(${(drop * -74).toFixed(1)}px)`;
+      break;
+    }
+    case "scale-up":
+      s.transform = `scale(${(0.55 + 0.45 * (1 - Math.pow(1 - inE, 4))).toFixed(4)})`;
+      break;
+    case "letter-spread":
+      // Arrives stretched wide and tightens into place (tracking-in feel).
+      s.transform = `scaleX(${(1 + (1 - inE) * 0.38).toFixed(4)})`;
+      break;
+    case "line-wipe": {
+      // A bottom edge rises and uncovers the line.
+      const w = 100 * inE;
+      s.clipPath = `inset(${(100 - w).toFixed(2)}% 0 0 0)`;
+      break;
+    }
+    case "roll-in":
+      s.transform = `rotate(${((1 - inE) * -170).toFixed(1)}deg) scale(${(0.3 + 0.7 * inE).toFixed(3)})`;
+      s.opacity = Math.min(1, opacity * (0.55 + 0.45 * inE));
+      break;
+    case "zoom-fade":
+      // Dolly-in: starts large and near, recedes to rest while fading up.
+      s.transform = `scale(${(1.3 - 0.3 * inE).toFixed(4)})`;
+      s.opacity = opacity * (0.35 + 0.65 * inE);
+      break;
+    // -- persistent-life: keep moving while the line holds -------------------
+    case "breathe":
+      s.transform = `scale(${(1 + 0.025 * Math.sin((life * 2 * Math.PI) / 3.2)).toFixed(4)})`;
+      break;
+    case "glow-pulse": {
+      const a = 0.5 + 0.5 * Math.sin((life * 2 * Math.PI) / 2.8 + j * 2);
+      s.textShadow = `0 0 ${(14 + 10 * a).toFixed(1)}px rgba(255,255,255,0.95), 0 0 ${(46 + 40 * a).toFixed(1)}px rgba(255,255,255,0.5)`;
+      s.transform = `scale(${(1.03 - 0.03 * inE).toFixed(4)})`;
+      break;
+    }
+    case "pendulum":
+      s.transform = `rotate(${(1.3 * Math.sin((life * 2 * Math.PI) / 4.6 + j * 3)).toFixed(3)}deg)`;
       break;
     case "fade":
     default:
@@ -704,13 +783,26 @@ function renderCue(cueObj, isPrev, life) {
   // -50%) and the block hung off the right edge of the frame; the same
   // overwrite took the band's top offset with it.
   //
+  // TWO MOTION SYSTEMS LIVE HERE, kept separate on purpose because they answer
+  // different questions:
+  //
+  //   cueStyle()  the line's ENTRANCE from the STYLES pool, plus the
+  //               persistent-life styles (breathe, glow-pulse, pendulum). Its
+  //               `life` argument is seconds since THIS cue started -- per cue,
+  //               not the component's `since`, which belongs to the current line
+  //               and is wrong for the outgoing one.
+  //   cueMotion() the --motion layer (src/motion.js): span-proportional
+  //               durations, travel clamped to the placement's real frame
+  //               margin, per-word stagger, its own opacity envelope.
+  //
   // --motion REPLACES cueStyle's transform rather than adding to it: both are
   // line-level entrances, and two of them on one element fight (gotcha 12 is
-  // precisely two writes to `transform` on one box). The motion's own opacity
+  // precisely two writes to `transform` on one box). The motion's opacity
   // envelope supersedes cueStyle's, and it is the one that has to be right --
-  // it is the thing that clears the line on its tapped end.
+  // it is what clears the line on its tapped end (gotcha 31).
+  const cueAge = t - cueObj.time;
   const motionIdLocal = motionId;
-  let inner = { ...cueStyle(pickedFor(cueObj.index), since / ENTER, until / EXIT, jitterFor(master, cueObj.index)), display: "inline-block" };
+  let inner = { ...cueStyle(pickedFor(cueObj.index), since / ENTER, until / EXIT, jitterFor(master, cueObj.index), cueAge), display: "inline-block" };
 
   if (motionIdLocal) {
     // HOW FAR THIS CUE MAY MOVE. Derived from the placement's real margin, not
@@ -741,7 +833,7 @@ function renderCue(cueObj, isPrev, life) {
       params: prm,
       // Per-cue, not the component's `since`/`until`: those belong to the
       // CURRENT line, and a line must be animated by its own clock.
-      since: t - cueObj.time,
+      since: cueAge,
       until: cueObj.end - t,
       span: Math.max(0.01, cueObj.end - cueObj.time),
       travel,
