@@ -128,7 +128,7 @@ last song" is not evidence; slot agreement is per-song luck.
 ## The five-font lineup (2026-09-30, same song, same motion deck)
 
 **The first delivery of this lineup was WRONG — every font drew जाउू for
-जाऊ and हेो for हो (gotcha 31) — and was re-delivered after the converter
+जाऊ and हेो for हो (gotcha 35) — and was re-delivered after the converter
 fix (3825634). The procedure below now includes step 4, which is what
 actually catches this class of bug; steps 1-3 passed while the glyphs were
 wrong.**
@@ -146,7 +146,7 @@ all delivered to `G:/Lyrical Video/Allare/`:
 
 Verification chain per font (the procedure to repeat):
 
-1. **Class check** — `sweep.json` class must be PREETI (gotcha 30).
+1. **Class check** — `sweep.json` class must be PREETI (gotcha 34).
 2. **Round-trip** — `py scripts/lrc_legacy.py song.lrc out/_rt.lrc` must
    report zero "not round-trip" lines for the song. NOTE: a clean
    round-trip proves only that the keys decode back through the SAME

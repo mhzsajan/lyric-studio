@@ -1104,7 +1104,7 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     hard gate) or verify a punctuation-heavy cue's still at full resolution
     before rendering.** Full story: docs/MOTIONS.md.
 
-31. **ROUND-TRIP SUCCESS IS NOT GLYPH CORRECTNESS — THE PREETI LIBRARY
+35. **ROUND-TRIP SUCCESS IS NOT GLYPH CORRECTNESS — THE PREETI LIBRARY
     CONVERTER MUST ENCODE, NOT JUST VERIFY.** All five delivered Allare
     fonts drew जाउू for जाऊ and हेो for हो, and every automated check was
     green: layout_encoder decomposes (ऊ -> उू, ो -> ेा), the map.json
@@ -1124,7 +1124,7 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     knows. And for any new layout, diff its keys for one song against the
     Preeti library output before trusting it.**
 
-32. **ARCHIVED: the deleted knowledge repo lives in
+36. **ARCHIVED: the deleted knowledge repo lives in
     `docs/knowledge-repo-archive/`** (verbatim at its last commit 3f485cb,
     with a provenance README). GitHub repo
     Lyric-Video-Generator-By-Remotion-AI-Engine was deleted upstream
@@ -1188,7 +1188,7 @@ re-rendered twice): 6:57.5 (417.1 s, 12513 frames @30fps), h264, no audio,
 (all PREETI class), roam + 22-style deck shuffle + 120 BPM beat grid
 (tracker said 123.05; forced with --bpm 120). First delivery drew जाउू/
 हेो in every font — the decomposed-key bug, gotcha 31; re-delivered after
-the preetimapper fix (3825634). Full recipe and motion catalog:
+the preetimapper fix (3825634, gotcha 35). Full recipe and motion catalog:
 docs/MOTIONS.md.
 
 **Superseded** — `out/Allare - Motion.mp4` (2026-09-30), the first
@@ -1201,7 +1201,7 @@ Abhinav, motion deck, beats. Supersedes the mp4 rows below for Allare.
 **Delivered from the predecessor pipeline (2026-09-28/29, lyric-video-
 remotion):** Allare (ProRes alpha .mov, Nirmala), Kali Kali and Ritu
 (mp4, roam+glow, AMS Manthan, edge-scan clean). AMS Manthan is
-GENERATED-class — those two renders were slot-agreement luck (gotcha 30);
+GENERATED-class — those two renders were slot-agreement luck (gotcha 34);
 a re-render through lyric-studio should use `--font-slug`/Abhinav.
 
 **Not yet implemented** (all measured, see `docs/REFERENCE.md`): head and tail
