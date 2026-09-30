@@ -36,7 +36,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from layout_encoder import encode as layout_encode, NAMES as LAYOUT_NAMES
+from layout_encoder import encode as layout_encode, NAMES as LAYOUT_NAMES, RS
 
 TIME_ROW = re.compile(r"^((\[\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?\])+)(.*)$")
 META_RE = re.compile(r"^\[(ti|ar|al|au|by|re|ve|length|offset|ti-font|ti-fontfile):(.*)\]$", re.I)
@@ -48,24 +48,88 @@ META_RE = re.compile(r"^\[(ti|ar|al|au|by|re|ve|length|offset|ti-font|ti-fontfil
 KEY_FIXES = {"फ": "km"}
 
 
+def _preeti_library(word):
+    """Canonical Preeti keys from npttf2utf's own preetimapper, or None.
+
+    Why the library converter must go FIRST for Preeti: layout_encoder's
+    candidates encode by table lookup plus DECOMPOSITION (ऊ -> उू, ो -> ेा).
+    Those decomposed sequences decode back cleanly through map.json, so the
+    round-trip check passes -- but a Preeti-era font draws the parts as
+    separate glyphs: जाऊ came out as जाउू (उ plus a detached hook) and हो as
+    हेो, frame-verified in Abhinav and four more fonts. npttf2utf's converter
+    emits what a Preeti typist actually types -- the composite `m` for ऊ,
+    ो as `f]`, फ as `km`, rakar as `|` -- which is what these fonts were DRAWN
+    for. The old nepali-lyric-video-maker pipeline fed exactly these keys.
+
+    Returns None whenever the library cannot cleanly handle the word, so the
+    caller falls back to the table encoder with its loud warnings.
+    """
+    try:
+        from npttf2utf.base.preetimapper import convert as preeti_convert
+    except ImportError:
+        return None
+    try:
+        keys = preeti_convert(word).replace(RS, "C")  # ऋ has no key slot; C is its Preeti seat
+    except Exception:
+        return None
+    if not keys or any("\u0900" <= ch <= "\u097f" for ch in keys):
+        return None  # Devanagari in keys = the font has no glyph for it
+    # The lyricist's '..' marks must key as '=' (the PERIOD glyph slot), not
+    # as '.' -- in the Preeti layout the '.' key sits on the DANDA glyph, so
+    # 'xf]..' draws two vertical bars where every reference video shows two
+    # dots. Key '=' decodes back to '.', so verification is unaffected. Only
+    # applied when the source word itself has no '।', which is the one
+    # character that legitimately keys as '.'.
+    if "\u0964" not in word and "\u0965" not in word:
+        keys = keys.replace(".", "=")
+    return keys
+
+
+def _norm_punct(s):
+    """Fold danda variants so '..' vs '।।' compares equal.
+
+    Preeti typists (and npttf2utf, and the predecessor pipeline) key the
+    lyricist's trailing '..' as '=' -- the font's danda glyph -- which decodes
+    back as '।'. Same marks, different codepoints; without this fold every
+    dotted word falsely fails verification and falls back to table keys.
+    """
+    return s.replace("\u0965", "..").replace("\u0964", ".")
+
+
 def convert_line(text, layout):
     """Unicode text -> Preeti-layout key text, word by word (keeps spaces)."""
+    from layout_encoder import _decode, _canon, _fold_ligs
     out = []
     for word in text.split(" "):
         if not word.strip():
             out.append(word)
             continue
-        keys, exact = layout_encode(word, layout)
-        for uni, key in KEY_FIXES.items():
-            keys = keys.replace(uni, key)
-        if not exact:
-            # after KEY_FIXES, re-verify by decoding
-            from layout_encoder import _decode
-            back = _decode(keys, layout)
-            for a, b in (("उू", "ऊ"), ("इी", "ई")):
-                back = back.replace(a, b)
-            if back == word:
-                exact = True
+        keys, exact = None, False
+        if layout == "Preeti":
+            lib = _preeti_library(word)
+            if lib is not None:
+                try:
+                    back = _decode(lib, layout)
+                    if _norm_punct(_fold_ligs(_canon(back))) == _norm_punct(_fold_ligs(_canon(word))):
+                        keys, exact = lib, True
+                    else:
+                        print(f"  .. library keys did not verify for {word!r} "
+                              f"(decoded {back!r}); using the table encoder",
+                              file=sys.stderr)
+                except Exception as err:
+                    print(f"  .. library decode failed for {word!r}: {err}",
+                          file=sys.stderr)
+        if keys is None:
+            keys, exact = layout_encode(word, layout)
+            for uni, key in KEY_FIXES.items():
+                keys = keys.replace(uni, key)
+            if not exact:
+                # after KEY_FIXES, re-verify by decoding
+                back = _decode(keys, layout)
+                for a, b in (("उू", "ऊ"), ("इी", "ई")):
+                    back = back.replace(a, b)
+                if _norm_punct(_fold_ligs(_canon(back))) == _norm_punct(_fold_ligs(_canon(word))):
+                    exact = True
         if not exact:
             print(f"  !! not round-trip exact: {word!r} -> {keys!r}", file=sys.stderr)
         out.append(keys)

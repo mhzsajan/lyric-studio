@@ -1104,6 +1104,34 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     hard gate) or verify a punctuation-heavy cue's still at full resolution
     before rendering.** Full story: docs/MOTIONS.md.
 
+35. **ROUND-TRIP SUCCESS IS NOT GLYPH CORRECTNESS — THE PREETI LIBRARY
+    CONVERTER MUST ENCODE, NOT JUST VERIFY.** All five delivered Allare
+    fonts drew जाउू for जाऊ and हेो for हो, and every automated check was
+    green: layout_encoder decomposes (ऊ -> उू, ो -> ेा), the map.json
+    decoder accepts both matra orders, so keys it generated round-trip
+    perfectly through its own table while real fonts drew the parts as
+    separate glyphs. Worse, the predecessor's own `_legacy-*.lrc` files
+    used the SAME decomposed keys — the old .mov shipped the same bugs,
+    reading as correct only because Chromium shaped the hook faintly.
+    Symmetric verification can never catch a table that disagrees with the
+    font; only looking at pixels can. Fix (3825634): npttf2utf's
+    preetimapper — what Preeti typists actually type, the sequences the
+    fonts were DRAWN for — now encodes first for Preeti (`hfpm` for जाऊ,
+    `f]` for ो, `k|` for प्र, `km` for फ), the table encoder is fallback
+    only, and trailing dots key as '=' (period glyph) not '.' (danda slot).
+    Rule: **Preeti encoding = library converter first; a homebrew candidate
+    generator may never be the primary encoder for a layout the library
+    knows. And for any new layout, diff its keys for one song against the
+    Preeti library output before trusting it.**
+
+36. **ARCHIVED: the deleted knowledge repo lives in
+    `docs/knowledge-repo-archive/`** (verbatim at its last commit 3f485cb,
+    with a provenance README). GitHub repo
+    Lyric-Video-Generator-By-Remotion-AI-Engine was deleted upstream
+    2026-09-30; local clone `C:/Users/o0o/tools/lyric-video-generator`
+    remains as a git fossil but is no longer the reference. Cite the
+    archive, not the clone.
+
 ## The shape of the roam audio bug, in one line
 
 A component with **two** return paths will eventually have a side element in
@@ -1153,13 +1181,19 @@ before trusting any figure about a render.
 
 ## Render state
 
-**Proven and current** — `out/Allare - Motion.mp4` (2026-09-30), the first
-motion-pack song: 6:58, 12524 frames @30fps, h264, pure black, no audio,
-**Abhinav** (PREETI class), roam + 22-style deck shuffle (no repeats within
-the song) + 120 BPM beat grid (tracker said 123.05; forced with --bpm 120).
-Critique PASS 30/30 on all checks. First cut used AMS Cinema and shipped
-wrong glyphs (gotcha 30); re-rendered on Abhinav after a full-res still
-check. Full recipe and motion catalog: docs/MOTIONS.md.
+**Proven and current** — the five-font Allare lineup
+(`G:\Lyrical Video\Allare\Allare - Motion - <Font>.mp4`, 2026-09-30,
+re-rendered twice): 6:57.5 (417.1 s, 12513 frames @30fps), h264, no audio,
+**Abhinav / Ananda Lipi Bold BT / Himalayabold / Shreenath Bold / Katmandu**
+(all PREETI class), roam + 22-style deck shuffle + 120 BPM beat grid
+(tracker said 123.05; forced with --bpm 120). First delivery drew जाउू/
+हेो in every font — the decomposed-key bug, gotcha 31; re-delivered after
+the preetimapper fix (3825634, gotcha 35). Full recipe and motion catalog:
+docs/MOTIONS.md.
+
+**Superseded** — `out/Allare - Motion.mp4` (2026-09-30), the first
+motion-pack cut: single font (Abhinav), same bugs, same fixes as the
+lineup above.
 
 **Delivered (G:\Lyrical Video\Allare\Allare - Motion.mp4, 2026-09-30)** —
 Abhinav, motion deck, beats. Supersedes the mp4 rows below for Allare.
@@ -1167,7 +1201,7 @@ Abhinav, motion deck, beats. Supersedes the mp4 rows below for Allare.
 **Delivered from the predecessor pipeline (2026-09-28/29, lyric-video-
 remotion):** Allare (ProRes alpha .mov, Nirmala), Kali Kali and Ritu
 (mp4, roam+glow, AMS Manthan, edge-scan clean). AMS Manthan is
-GENERATED-class — those two renders were slot-agreement luck (gotcha 30);
+GENERATED-class — those two renders were slot-agreement luck (gotcha 34);
 a re-render through lyric-studio should use `--font-slug`/Abhinav.
 
 **Not yet implemented** (all measured, see `docs/REFERENCE.md`): head and tail
