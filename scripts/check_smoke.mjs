@@ -260,6 +260,30 @@ console.log("\n=== 5. every still is a real frame, not a blank one ===");
 
 rmSync(OUT, { recursive: true, force: true });
 
+console.log("\n=== 6. RituPiece draws ITS OWN cues, not the prepared song's ===");
+// The bug this catches: resolveMetadata() does
+// `props: {...props, cues: parsed.cues}` -- it reads the cues out of
+// lyrics.generated.js and OVERWRITES what was passed in. RituPiece's lyrics are
+// supplied as DATA, on purpose, so the composition cannot re-derive an end time
+// differently from the way the gate will check it.
+//
+// So with the shared resolver attached, RituPiece drew whatever song happened to
+// be prepared in this tree. The first render drew ALLARE -- left there by section
+// 1's own prepare step -- and the every-frame gate then compared RITU's cue windows
+// against ALLARE's ink: 28 overshoots, a 26-second overrun, and a word in the
+// wrong language. Every one of those numbers was an accurate measurement of the
+// wrong video, and nothing in the file looked wrong.
+{
+  const root = readFileSync(path.join(ROOT, "src", "Root.jsx"), "utf8");
+  const comp = /id="RituPiece"[\s\S]*?defaultProps/.exec(root);
+  ok(!!comp && /calculateMetadata=\{\(\{ props \}\)/.test(comp[0]),
+    "RituPiece does not use the shared resolveMetadata",
+    comp ? (/resolveMetadata/.test(comp[0].split("calculateMetadata")[1] || "")
+      ? "still attached" : "") : "composition not found");
+  ok(!!comp && /durationInFrames/.test(root),
+    "and takes its duration from props instead");
+}
+
 console.log(failed
   ? `\n  ${failed} CHECK(S) FAILED\n`
   : `\n  every composition renders a real frame -- the only instrument that sees a missing binding\n\n`);

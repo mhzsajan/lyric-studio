@@ -239,7 +239,29 @@ export const RemotionRoot = () => {
         // Full-frame picture, like LyricStyled: h264 is the deliverable and alpha
         // is meaningless, so no ProRes default here.
         defaultCodec="h264"
-        calculateMetadata={resolveMetadata}
+        // DELIBERATELY NOT resolveMetadata, and this is a real decision.
+        //
+        // resolveMetadata() does `props: {...props, cues: parsed.cues, ...}` --
+        // it reads the cues out of lyrics.generated.js and OVERWRITES whatever
+        // passed in. That is right for the overlay, whose lyrics come from the
+        // prepared song, and wrong for this piece, whose lyrics are supplied as
+        // data so the composition cannot re-derive an end time differently from
+        // the way the gate will check it.
+        //
+        // With resolveMetadata attached, the first Ritu render drew ALLARE: the
+        // smoke test had prepared Allare, and its cues replaced Ritu's. The gate
+        // then compared Ritu's cue windows against Allare's ink and reported 28
+        // overshoots and a 26-second overrun -- all of them real measurements of
+        // the wrong video. Nothing in the file looked wrong; the piece simply
+        // showed a different song.
+        //
+        // So RituPiece gets its duration from props (durationInFrames, which
+        // render_ritu.mjs computes from the song's own last cue) and its cues from
+        // props, and no metadata resolver overrides either.
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.round(
+            (props?.durationInFrames || FALLBACK_SECONDS * 30)),
+        })}
         defaultProps={{
           cues: [],
           // The beat grid, for the CAMERA only. See docs/RITU.md section 3: this

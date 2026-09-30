@@ -200,6 +200,7 @@ export const RituPiece = ({
   beats = [],
   fontSize = 108,
   seed = "ritu",
+  plate = true,
   durationInFrames,
 }) => {
   const frame = useCurrentFrame();
@@ -209,6 +210,23 @@ export const RituPiece = ({
 
   const beatTimes = Array.isArray(beats) ? beats : [];
 
+  // `plate` IS THE GATE'S PREMISE, MADE SWITCHABLE.
+  //
+  // scan_visibility.py decides "is a lyric visible" by asking whether any pixel is
+  // above a threshold. That works for the OVERLAY, which is text on a black plate:
+  // ink means a glyph and nothing else.
+  //
+  // It does not hold for this piece. Run against the finished film it reported
+  // ink in 7845 of 7845 frames -- 100% -- and the worst "overshoot" was
+  // "+26.3 seconds past the cue's end", which was the PAINTED MOTIFS, not the type.
+  // The gate was measuring the picture and calling it text.
+  //
+  // So the proof is made on a plate-only pass: `plate: false` draws the ground at
+  // pure black and no motifs, so ink means a glyph again and the same gate is
+  // valid. The deliverable is the plate; the timing is proved without it, and
+  // neither is asked to stand in for the other.
+  const showPlate = plate !== false;
+
   // The base fall. `scaleAt` is the section-rate integral and is monotonic by
   // construction; check_camera.mjs walks all 7530 frames to keep it that way.
   const s = scaleAt(t);
@@ -217,7 +235,7 @@ export const RituPiece = ({
   // The ground: a radial fall-off from a warm centre, plus a slow vertical
   // gradient. Kept very dark -- this is a piece the user asked to be NOT bright,
   // and the type has to be the brightest thing in the frame by a wide margin.
-  const ground = RITU.ground;
+  const ground = showPlate ? RITU.ground : "#000000";
 
   // Dust. Slow, sparse, and never brighter than 0.32 opacity: enough to give the
   // empty 66-second cold open something to look at, not enough to read as snow.
@@ -236,7 +254,7 @@ export const RituPiece = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: ground, overflow: "hidden" }}>
-      {/* the deep field: a warm centre falling off to near-black, which is what
+      {showPlate && <>{/* the deep field: a warm centre falling off to near-black, which is what
           makes the zoom read as depth rather than as a brightening frame */}
       <AbsoluteFill
         style={{
@@ -244,8 +262,9 @@ export const RituPiece = ({
         }}
       />
 
-      {/* the falling motifs, far to near */}
-      {LAYERS.map((layer, li) => {
+      </>}
+      {/* the falling motifs, far to near -- plate only, for the reason above */}
+      {showPlate && LAYERS.map((layer, li) => {
         const depth = layerDepth(t, layer.z);
         return (
           <AbsoluteFill key={"L" + li} style={{ pointerEvents: "none" }}>
@@ -271,13 +290,15 @@ export const RituPiece = ({
         );
       })}
 
-      {motes}
+      {showPlate && motes}
 
       {/* A vignette that closes in slightly as the song goes on. Subtle: it is
           there to keep the eye off the frame edge, not to be noticed. */}
       <AbsoluteFill
         style={{
-          background: `radial-gradient(ellipse at 50% 50%, rgba(11,12,16,0) 42%, rgba(11,12,16,${(0.55 + Math.min(0.25, t * 0.0011)).toFixed(3)}) 100%)`,
+          background: showPlate
+            ? `radial-gradient(ellipse at 50% 50%, rgba(11,12,16,0) 42%, rgba(11,12,16,${(0.55 + Math.min(0.25, t * 0.0011)).toFixed(3)}) 100%)`
+            : "transparent",
         }}
       />
 

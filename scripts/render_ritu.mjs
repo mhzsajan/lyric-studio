@@ -27,7 +27,7 @@
 // stops rather than producing a second one.
 
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseLrc } from "../src/parse-lrc.mjs";
@@ -116,7 +116,7 @@ if (withBeats) {
 // The props. Cues go in as data, not as parsed source, so the composition cannot
 // re-derive an end time differently from the way the gate will check it -- gotcha
 // 31 again, at the seam.
-const props = {
+const base = {
   cues: cues.map((c, i) => ({
     index: c.index ?? i, time: c.time, end: c.end, text: c.text,
   })),
@@ -125,11 +125,29 @@ const props = {
   seed: "ritu",
   durationInFrames: Math.round(lastEnd * 30),
 };
+const props = { ...base, plate: true };
+const propsNaked = { ...base, plate: false };
 
 mkdirSync(path.join(ROOT, "out"), { recursive: true });
 const propsPath = path.join(ROOT, "out", "ritu-props.json");
+const propsNakedPath = path.join(ROOT, "out", "ritu-props-plateonly.json");
 writeFileSync(propsPath, JSON.stringify(props, null, 1));
+writeFileSync(propsNakedPath, JSON.stringify(propsNaked, null, 1));
 mkdirSync(path.dirname(OUT), { recursive: true });
+
+// The verification pass, and it is a SEPARATE FILE on purpose.
+//
+// scan_visibility.py asks "is any pixel above a threshold", which is valid for the
+// overlay -- text on a black plate, so ink means a glyph and nothing else. It is
+// not valid here: run against the finished film it found ink in 7845 of 7845
+// frames and called a painted motif a 26-second lyric overshoot.
+//
+// So the TEXT is gated on a plate-only render of the same composition, same cues,
+// same timing -- with the ground and the motifs off. Ink means a glyph again, and
+// the same gate is honest. The deliverable is the picture; the timing is proved
+// without it. Neither stands in for the other, and the deliverable is NOT gated on
+// a number that was measured somewhere else.
+const NAKED = OUT.replace(/\.mp4$/i, "") + " [text only, for the gate].mp4";
 
 // Prepare the font through the SAME path the overlay uses, so the face is the
 // proven one and the font gate runs against it.
@@ -154,29 +172,61 @@ for (const line of prepLog.split("\n").filter((l) => /font gate|SAFE|missing/i.t
   console.log("  " + line.trim());
 }
 
-// The render.
+// The renders. The deliverable first, then the plate-only pass the gate is valid
+// on -- and if that pass fails, the DELIVERABLE IS NOT SHIPPED, which is the whole
+// point of doing them in this order and in the same run.
 writeFileSync(LOCK, String(process.pid));
 console.log("  rendering " + Math.round(lastEnd * 30) + " frames...");
-const r = spawnSync(process.execPath, [
+const renderOne = (out, propsPath) => spawnSync(process.execPath, [
   path.join(ROOT, "node_modules", "@remotion", "cli", "remotion-cli.js"),
-  "render", path.join(ROOT, "src", "index.js"), "RituPiece", OUT,
+  "render", path.join(ROOT, "src", "index.js"), "RituPiece", out,
   "--codec=h264", "--crf=18", "--pixel-format=yuv420p",
   "--image-format=jpeg", "--muted",
   "--props=" + propsPath,
 ], { cwd: ROOT, stdio: "inherit" });
 
-try { existsSync(LOCK) && (0); } catch {}
-import("node:fs").then((fs) => { try { fs.unlinkSync(LOCK); } catch {} });
-
+const r = renderOne(OUT, propsPath);
 if (r.status !== 0) {
+  try { unlinkSync(LOCK); } catch {}
   console.error("  render failed, exit " + r.status);
   process.exit(1);
 }
+
 console.log("");
 console.log("  OK  " + OUT);
 console.log("");
-console.log("  GATE IT BEFORE BELIEVING IT:");
-console.log('    py scripts\\scan_visibility.py "' + OUT + '" "' +
-  path.join(SONG_DIR, start) + '" "' + path.join(SONG_DIR, end || start) + '"');
-console.log("  Every cue must clear at its tapped end, with no frame to spare.");
+
+// The gate, on the pass the gate means.
+console.log("  rendering the plate-only pass, to gate the TEXT timing...");
+const rn = renderOne(NAKED, propsNakedPath);
+try { unlinkSync(LOCK); } catch {}
+if (rn.status !== 0) {
+  console.error("  the plate-only pass failed; not shipping an ungated piece");
+  process.exit(1);
+}
+
+const scan = spawnSync("py", [
+  path.join(ROOT, "scripts", "scan_visibility.py"),
+  NAKED,
+  path.join(SONG_DIR, start),
+  path.join(SONG_DIR, end || start),
+  "--lit", "12",
+], { cwd: ROOT, encoding: "utf8" });
+
+const scanLog = (scan.stdout || "") + (scan.stderr || "");
 console.log("");
+console.log("  THE GATE, on the text-only pass of the same composition:");
+for (const line of scanLog.split("\n").filter((l) => /ink present|interval|OK:|overshoot|none:|cue window/i.test(l))) {
+  console.log("    " + line.trim());
+}
+console.log("");
+if (scan.status === 0) {
+  console.log("  PASSED -- every cue clears at its tapped end, no frame to spare.");
+  console.log("  " + NAKED);
+  console.log("");
+} else {
+  console.error("  FAILED -- a cue outlived its own window. Not shipping this file.");
+  console.error(scanLog.split("\n").slice(-14).map((l) => "    " + l).join("\n"));
+  console.error("");
+  process.exit(1);
+}
