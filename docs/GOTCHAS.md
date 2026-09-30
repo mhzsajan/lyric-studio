@@ -85,7 +85,8 @@ chooses a font.
    a word look like it has a stray `0` or `O` in it.
    Never assume Abhinav's Preeti layout generalises: it is a property of the
    layout that `npttf2utf` covers, not of the renderer. See **docs/FONTS.md**
-   and `scripts/passthrough.py`.
+   and `nepali-legacy-fonts/scripts/passthrough.py` — that tool lives in the
+   font repo now; this repo held a stale copy that had already drifted.
 8. **Random size is per WORD by default, never per letter.** Devanagari's
    shirorekha (the headline bar) is continuous inside a word — two letters at
    different sizes snap it in half. Word boundaries are already gaps, so they

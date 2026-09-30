@@ -70,19 +70,42 @@ if (endsText == null) {
     for (const p of problems.slice(0, 6)) fail("ends file: " + p);
     if (problems.length > 6) console.log("         ...and " + (problems.length - 6) + " more");
   } else ok("ends file parses cleanly");
+  // A cue has a REAL end if the ends file supplied it -- whether or not it had
+  // to be trimmed to fit.
+  //
+  // "timed-clamped" is a real tapped end that ran past the next line's start
+  // (the singer's tail), so it was cut back to the next line. It is not a
+  // failure and not a guess; it is the tapped data, and the pipeline reports it
+  // as such. This check counted only endFrom === "timed" and so reported Allare
+  // as 99/109 with "10 rejected as stale" and told the reader "do not render
+  // yet" -- on the one song in this repo whose ends are 109/109 real, with
+  // exactly those 10 clamped. A check that cries wolf on a correct file is
+  // worse than no check: the next real finding gets ignored too.
   const timed = cues.filter((c) => c.endFrom === "timed").length;
-  const pct = Math.round((timed / cues.length) * 100);
-  if (timed === cues.length) {
+  const clamped = cues.filter((c) => c.endFrom === "timed-clamped").length;
+  const real = timed + clamped;
+  const pct = Math.round((real / cues.length) * 100);
+  if (real === cues.length) {
     ok("every cue has a real end (" + pct + "%)");
-  } else if (timed === 0) {
+    if (clamped) {
+      console.log("         " + clamped + " of them were CLAMPED to the next line's start --");
+      console.log("         the tapped end ran past it (the singer's tail). Real data,");
+      console.log("         trimmed so two lines are never on screen at once.");
+    }
+  } else if (real === 0) {
     // A file that matches nothing usable is almost certainly from a different
     // take, and rendering it silently would just reproduce the old estimate
     // while looking like the ends had been applied.
     fail("no end from this file could be used (" + pct + "% applied) -- " +
       "it looks like a different take of the song");
   } else {
-    fail(timed + "/" + cues.length + " cues timed (" + pct + "%): " +
-      (cues.length - timed) + " rejected as stale. Check the .lrc and .ends.txt are from the same session");
+    // Some real ends, some not: worth stopping for, and the clamped count is
+    // reported so the reader can tell a genuine mismatch from a song whose
+    // tails were trimmed.
+    fail(real + "/" + cues.length + " cues have a real end (" + pct + "%): " +
+      (cues.length - real) + " have to be ESTIMATED from the next line" +
+      (clamped ? " (" + clamped + " were clamped, " + timed + " used as tapped)" : "") +
+      ". Check the .lrc and .ends.txt are from the same session");
   }
   const orphans = [...ends.keys()].filter((k) => !cues.some((c) => Math.round(c.time * 100) === k));
   if (orphans.length) warn(orphans.length + " end(s) in the file match no line in the .lrc -- it may be from a different take");

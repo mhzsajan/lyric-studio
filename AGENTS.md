@@ -127,16 +127,43 @@ styles/house.md         the look, in prose
 ## Before you change anything
 
 ```powershell
-node scripts\check_flag_defaults.mjs   # the Number(null) trap
-node scripts\check_ends_wire.mjs      # ends reach the composition
-node scripts\check_motion.mjs          # motion invariants
-node scripts\check_beats.mjs
-node scripts\check_parse.mjs
+node scripts\check_all.mjs      # every self-contained suite. This is the command.
+node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 ```
 
-All five are seconds, and all five have caught a real bug in this repo. If you
-add a check, **prove it fails on a known-bad input first** — that is the habit
-that keeps them worth running.
+There are **18** check scripts, in three kinds. Only the first kind must be
+green before you commit, and `check_all.mjs` runs all of it:
+
+**1. Self-contained suites (13)** — pure functions of the source; no render, no
+font, no audio. Seconds each, and every one has caught a real bug here.
+
+| | guards |
+|---|---|
+| `check_flag_defaults.mjs` | a numeric flag read with `Number(null)` → 0 (gotcha 28) |
+| `check_ends_wire.mjs` | the `.ends.txt` reaches the **composition**, not just the report (gotcha 31) |
+| `check_motion.mjs` | motion pool: seeded, no repeats, finished inside each cue's end |
+| `check_animation.mjs` | word/letter pools, **the shirorekha rule**, size-drift bounds |
+| `check_parse.mjs` | the `.lrc` + `.ends.txt` parse |
+| `check_beats.mjs` | beat anchoring and the "untrusted grid is refused" rule |
+| `check_pairing.mjs` | the `.lrc` and ends file must find each other by name |
+| `check_letters.mjs` | grapheme splitting, letter sizing on real lyric text |
+| `check_mix.mjs` | the mix-mode placement plan, and the arithmetic covering every cue |
+| `check_width_model.mjs` | the width model, its classifier, its coefficients |
+| `check_word_timing.mjs` | derived word timings against a real song's cues |
+| `check_opener.mjs` | title-card window, asserted rather than eyeballed |
+| `check_doc_refs.mjs` | the docs cite files that exist, and the check list is not stale |
+
+**2. Song tools (2)** — take a `.lrc` and report about *that* song. Not gates: a
+song's result is not a repo state. `check_song.mjs` (cue order, positive spans,
+title/band) and `check_timing.mjs` (opener timings worked out from the song).
+
+**3. File checks (3)** — need a render or a font. `check_ends.py`,
+`check_output.py`, `check_font_cmap.py`. Two more live in the pipeline instead:
+`critique.py` and `scan_visibility.py` are stages 3 and 4, run on every render.
+
+If you add a check, **prove it fails on a known-bad input first** — that is the
+habit that keeps them worth running, and `check_doc_refs.mjs` will now tell you
+if you forget to list it.
 
 Two machine-specific traps, both of which have cost real time:
 - Renders **share `src/lyrics.generated.js`** — two at once in one tree and the
