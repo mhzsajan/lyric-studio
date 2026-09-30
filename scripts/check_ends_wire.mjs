@@ -89,8 +89,14 @@ if (existsSync(LRC) && existsSync(ENDS)) {
   // the same parse proves nothing; this is the comparison that failed before.
   let moduleLrc = null;
   let moduleEnds = null;
+  let moduleIsLegacy = false;
   if (existsSync(generatedPath)) {
     const g = readFileSync(generatedPath, "utf8");
+    // A --legacy-font render stores the PREETI-TRANSCODED text in LRC_TEXT, so
+    // it legitimately differs from the source .lrc. That is not a wiring fault
+    // and must not be reported as one -- but the ends are still delivered, and
+    // that is what this check exists to prove, so compare the ENDS either way.
+    moduleIsLegacy = /LEGACY_FONT_FAMILY = "[^"]+"/.test(g);
     // Extract up to the CLOSING backtick-semicolon, not the first `;` -- the
     // old form matched the semicolon inside the string and reported a spurious
     // one-byte difference that looked like corruption.
@@ -112,10 +118,18 @@ if (existsSync(LRC) && existsSync(ENDS)) {
   if (moduleLrc === null) {
     console.log("  SKIP  no generated module to compare against (run a render first)");
   } else {
-    ok(moduleLrc === lrcText, "LRC_TEXT in the module matches the source .lrc");
+    if (moduleIsLegacy) {
+      console.log("  SKIP  LRC_TEXT differs from the source because this is a " +
+        "legacy (Preeti-transcoded) render -- expected, and not what this checks");
+    } else {
+      ok(moduleLrc === lrcText, "LRC_TEXT in the module matches the source .lrc");
+    }
     ok((moduleEnds || "") === endsText, "ENDS_TEXT in the module matches the source .ends.txt",
       "module " + (moduleEnds ? moduleEnds.length : 0) + " chars vs file " + endsText.length + " chars");
 
+    // The cue's own TEXT is transcoded in a legacy render but its TIMES are
+    // untouched by the transcoder, so the timing comparison below is valid
+    // either way -- which is the part that matters for the ends wiring.
     const rendered = parseLrc(moduleLrc, moduleEnds || "");
     ok(rendered.cues.length === reported.cues.length, "same cue count",
       rendered.cues.length + " vs " + reported.cues.length);

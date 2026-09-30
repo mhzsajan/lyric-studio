@@ -1,4 +1,4 @@
-﻿"""show_transform.py -- the per-WORD Unicode -> legacy-key table, for review.
+"""show_transform.py -- the per-WORD Unicode -> legacy-key table, for review.
 
     py scripts/show_transform.py <lrc> [--font abhinav] [--layout Preeti]
                                  [--only-wrong] [--all]
