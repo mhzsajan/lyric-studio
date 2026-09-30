@@ -284,7 +284,12 @@ export function pulseGlow(level, amplitude, age, span) {
  * order changes what the motion looks like.
  */
 export function wordDepthStyle(parts) {
-  const { tracking: tr, baseline: by, arc: ar, depth: dp, chromatic: ch, glow } = parts;
+  // `tint` is an "r, g, b" triple from src/color.js. When colour is on, the glow
+  // is the word's OWN colour rather than white: a white halo around a coloured
+  // word reads as a printing misregistration, and it is the giveaway that two
+  // effects were applied separately instead of designed together. Null keeps the
+  // original white glow, so a render with --color-mode off is byte-identical.
+  const { tracking: tr, baseline: by, arc: ar, depth: dp, chromatic: ch, glow, tint } = parts;
   const t = [];
   if (dp && dp.scale !== 1) t.push(`scale(${dp.scale.toFixed(4)})`);
   if (ar && ar.rot) t.push(`rotate(${ar.rot.toFixed(2)}deg)`);
@@ -293,7 +298,7 @@ export function wordDepthStyle(parts) {
   if (dp && dp.blur > 0.05) t.push(`blur(${dp.blur.toFixed(2)}px)`);
   const out = {};
   if (dp && dp.opacity !== 1) out.opacity = dp.opacity;
-  if (glow > 0.2) out.textShadow = `0 0 ${glow.toFixed(1)}px rgba(255,255,255,${(glow / 90).toFixed(2)})`;
+  if (glow > 0.2) out.textShadow = `0 0 ${glow.toFixed(1)}px rgba(${tint || "255,255,255"},${(glow / 90).toFixed(2)})`;
   if (t.length) out.transform = t.join(" ");
   if (tr) out.wordGap = tr.toFixed(3) + "em";
   if (ch && ch.dx) out.chromaticDx = ch.dx.toFixed(2);

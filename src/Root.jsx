@@ -131,6 +131,39 @@ const BASE_DEFAULTS = {
   // Preview caps the timeline at the last sung line + 2s (resolveMetadata).
   preview: false,
   color: "#ffffff",
+  // --color-mode: seeded per-word colour, and per-letter from `vivid` up
+  // (src/color.js). Off by default: this deliverable is white-on-black blended
+  // Add/Screen over a camera feed, so a colour nobody asked for is not a
+  // neutral choice -- a dark or saturated word stops adding light and vanishes
+  // into the footage. `colorHue` is the palette anchor in degrees.
+  colorMode: "off",
+  colorHue: 210,
+  // Which hues may sit together. The level says HOW MUCH colour; this says what
+  // goes with what. `analogous` is tonal and safe; `rainbow` reproduces the
+  // pre-scheme behaviour exactly, so a look you have seen is still reachable.
+  colorScheme: "analogous",
+  // A gradient painted across a phrase line. One property, no span per letter,
+  // and no effect on glyph geometry -- so it cannot step the shirorekha.
+  colorGradient: false,
+  // --cut: the newspaper / cut-paper look. Each word a clipping at its own angle
+  // and height with a torn edge. Off by default because it deliberately breaks
+  // the formation, which is a look, and a look nobody chose cannot be asked for
+  // again by name.
+  cut: "off",
+  // --type: the typed-on reveal. Letters arrive left to right and STAY. Off by
+  // default, and note this is the one effect here that MUST finish inside the
+  // cue's own end -- a letter still arriving when the line fades out is the
+  // lingering-lyric bug. See src/typing.js.
+  type: "off",
+  // --stroke: a hairline on the glyph outline, for legibility over bright
+  // footage. 0 = off. A DARK stroke only bites under Screen blending; under
+  // pure Add it adds nothing and is invisible. See the flag in render.mjs.
+  stroke: 0,
+  strokeColor: "#000000",
+  // --scanlines: bright horizontal bands over the whole overlay. Bright, because
+  // a dark band adds no light under Add blending and would be invisible.
+  scanlines: 0,
+  scanlineAlpha: 0.1,
   // Beat sync: an ascending array of beat times in seconds (from
   // scripts/detect_beats.py via render.mjs --beats), or null. beatTol is how
   // far, in seconds, a word start may move to snap to a beat.

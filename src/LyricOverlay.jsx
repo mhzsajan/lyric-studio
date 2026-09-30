@@ -6,6 +6,25 @@ import { widthEm } from "./width-model.mjs";
 import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
+// Per-word and per-letter COLOUR (src/color.js). Separate from the depth layers
+// because colour is not a transform and, unlike them, takes no frame time at all
+// -- it is assigned from a seed and stays, so it cannot put a word on screen
+// after its line ended. The ranges are bounded for the Add/Screen overlay; see
+// the note at the top of color.js for why full-spectrum is not "more colourful".
+import {
+  wordColor, letterColor, lineColor, gradientCss, levelHasLetterColor,
+  levelTintsGlow, COLOR_LEVELS,
+} from "./color.js";
+// The cut-paper look: each word a clipping at its own angle, with a torn edge.
+import {
+  wordCut, tearBar, letterCut, wordCutTransform, CUT_LEVELS,
+} from "./cut.js";
+// The typed-on reveal. Its delay chain is fitted to the cue's own span for the
+// same reason `sequence` is -- a letter still arriving at the line's end is the
+// lingering-lyric bug.
+import {
+  typingPlan, fitDelay, typingState, levelIsLetterwise, TYPE_LEVELS,
+} from "./typing.js";
 import { buildMotionPlan, cueMotion, motionParams, travelBudget, wordMotion, MOTION_LEVELS } from "./motion.js";
 // The seven composition layers: tracking, baseline drift, arc, coupled depth,
 // the sequenced reveal, chromatic offset and audio-keyed glow. Separate from
@@ -124,6 +143,15 @@ function wordSpans(text, seed, index, amount) {
 }
 
 const clamp01 = (x) => Math.min(Math.max(x, 0), 1);
+
+// The pixel size a word is ACTUALLY being drawn at, given its fontSize
+// percentage and the line's base. The cut effect's lift and its torn edge are
+// in real px, so they need the real number -- "0.055 of what?" is not a
+// question a transform can answer.
+const fontSizeOf = (pct, base) => {
+  const n = pct ? parseFloat(String(pct).replace("%", "")) : 100;
+  return (base * (Number.isFinite(n) ? n : 100)) / 100;
+};
 const easeOut = (t) => 1 - Math.pow(1 - clamp01(t), 3);
 const easeIn = (t) => Math.pow(clamp01(t), 3);
 
@@ -305,7 +333,10 @@ export function wordState(mode, start, end, t, st) {
 function animatedWords(text, opts) {
   const { seed, index, anim, sizeMode, sizeVar, t, cueTime, cueEnd,
           letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm,
-          sizeDrift, depthLevel = "off", amplitude = null } = opts;
+          sizeDrift, depthLevel = "off", amplitude = null,
+          colorMode = "off", colorHue = 210, colorScheme = "analogous",
+          cut = "off", type = "off", stroke = 0, strokeColor = "#000000",
+          baseSize = 105 } = opts;
 
   // The cue's own span and start, needed by the composition layers. A cue's
   // span is the budget every layer has to finish inside -- the same budget
@@ -320,6 +351,27 @@ function animatedWords(text, opts) {
   if (words.length === 0) return text;
 
   const amount = Number(sizeVar) || 0;
+
+  // --type: the typed-on reveal, fitted to THIS cue's span.
+  //
+  // Both of these are computed ONCE per line, not per word, because the typing
+  // stagger runs across the whole line -- word 4's letters start after word 1's
+  // have finished. Computing a per-word chain would retype every word in unison,
+  // which is `word` level at best and not typing at all at worst.
+  const typeActive = TYPE_LEVELS.includes(type) && type !== "off";
+  const totalLetters = typeActive
+    ? words.reduce((n, w) => n + splitGraphemes(w.text).length, 0)
+    : 0;
+  const tPlan = typeActive ? typingPlan(type, words.length, totalLetters) : null;
+  const tFit = tPlan ? fitDelay(type, tPlan, cueSpan) : null;
+  // How many LETTERS precede word i, so the per-letter delay can continue across
+  // the word boundary instead of restarting. Without this the last letter of one
+  // word and the first of the next land on the same frame.
+  const lettersBefore = [];
+  {
+    let n = 0;
+    for (const w of words) { lettersBefore.push(n); n += splitGraphemes(w.text).length; }
+  }
 
   return words.map((w, i) => {
     // `mix` deals a different effect to each word, so a line is five
@@ -389,10 +441,30 @@ function animatedWords(text, opts) {
     const dChroma = chromaFor(depthLevel, 1 - wProg);
     const dGlow = depthLevel === "off" ? 0 : glowFor(depthLevel, amplitude, t - cueStartTime, cueSpan);
 
+    // --color-mode: this word's colour, from the line's SCHEME so the words in a
+    // line are related hues rather than six unrelated ones, then drawn from the
+    // seed and left alone. No `t` anywhere in it, which is the whole reason
+    // colour cannot introduce a lingering lyric.
+    // Declared BEFORE depthStyle because the glow is tinted with it.
+    const wc = wordColor(colorMode, seed, colorHue, index, i, { scheme: colorScheme });
+    const colorStyle = wc ? { color: wc.css } : {};
+
     const depthStyle = depthLevel === "off" ? {} : wordDepthStyle({
       tracking: dTrack, baseline: dBase, arc: dArc, depth: dDep,
       chromatic: dChroma, glow: dGlow,
+      // The glow takes the word's own colour when colour is on, so the halo and
+      // the glyph agree. Null otherwise, which leaves the white glow exactly as
+      // it was -- so a render without --color-mode is unchanged by this file.
+      tint: levelTintsGlow(colorMode) && wc ? wc.rgb : null,
     });
+
+    // --cut: this word as a separate clipping. The transform is JOINED to the
+    // other three writers rather than assigned over them -- that is gotcha 12,
+    // and it has now come up four times in this file.
+    const cutOn = CUT_LEVELS.includes(cut) && cut !== "off";
+    const wcCut = cutOn ? wordCut(cut, seed, index, i, fontSizeOf(pct, baseSize)) : null;
+    const cutT = wcCut ? wordCutTransform(wcCut) : "";
+    const tear = cutOn ? tearBar(cut, seed, index, i, fontSizeOf(pct, baseSize)) : null;
 
     // The gap BETWEEN words carries the tracking. Letter spacing inside a word
     // would separate one syllable's letters and snap the shirorekha, so it is
@@ -409,15 +481,54 @@ function animatedWords(text, opts) {
             // inline-block so a scale() has its own box to act on; on a plain
             // inline span the transform would apply to the whole line.
             display: "inline-block",
+            // relative ONLY when there is a torn edge, so a render with --cut off
+            // builds exactly the nodes it built before this existed.
+            ...(tear ? { position: "relative", paddingBottom: "0.16em" } : {}),
             ...(pct ? { fontSize: pct } : {}),
+            ...colorStyle,
             ...ws,
-            ...(transform ? { transform } : {}),
+            // Four writers to one `transform` now: the word's own entrance, the
+            // motion offset, the size drift, and the cut. They are JOINED in a
+            // deliberate order rather than assigned over each other -- gotcha 12,
+            // and the cut is the fourth writer to arrive here. The word's own
+            // entrance must stay RIGHTMOST because rightmost applies first, which
+            // makes it the outermost gesture.
+            ...([wm, drift, cutT, ws.transform].filter(Boolean).length
+              ? { transform: [wm, drift, cutT, ws.transform].filter(Boolean).join(" ") }
+              : {}),
             ...depthStyle,
           }}
         >
+          {/*
+            The torn edge lives on its OWN absolutely-positioned child, never as a
+            clip-path on this span. That is not a style preference: clip-path
+            REMOVES ink, and the ink in the bottom of a word is the shirorekha --
+            so clipping the word to a torn shape would nibble the headline bar
+            this whole file is careful about. As a sibling painted behind the
+            text it removes nothing.
+          */}
+          {tear ? (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: "0.34em",
+                zIndex: -1,
+                ...tear,
+              }}
+            />
+          ) : null}
           {letterNodes(w.text, {
             seed, wordIndex: index, letterIndexBase: i,
             letterSizeVar, letterAnim, t, wordStart: wStart, wordEnd: w.end,
+            // The word's colour goes down so each letter can step away from it.
+            colorMode, colorHue, colorScheme, cueIndex: index, wordOrdinal: i,
+            wordColorObj: wc,
+            // --cut and --type both act per letter, inside the word.
+            cut, type, typeFit: tFit, typePlan: tPlan, letterBase: lettersBefore[i],
           })}
         </span>
       </React.Fragment>
@@ -521,15 +632,27 @@ export function letterState(mode, elapsed, letterIndex) {
 }
 
 /**
- * Render one word's letters as spans. Returns the plain string when both
- * letter features are off, so a normal render builds no extra nodes.
+ * Render one word's letters as spans. Returns the plain string when every letter
+ * feature is off, so a normal render builds no extra nodes.
+ *
+ * --color-mode joins size and animation in that decision. Colour is on the
+ * ALLOWED side of the shirorekha rule (it changes no glyph's size or position --
+ * see the note above wordDepthStyle), but a letter still needs its own SPAN to
+ * carry a colour, so leaving this guard untouched would silently drop per-letter
+ * colour for every render that did not also ask for per-letter size.
  */
 function letterNodes(text, opts) {
   const { seed, wordIndex, letterIndexBase, letterSizeVar, letterAnim, t,
-          wordStart } = opts;
+          wordStart, colorMode = "off", colorHue = 210, colorScheme = "analogous",
+          cueIndex = 0, wordOrdinal = 0, wordColorObj = null,
+          cut = "off", type = "off", typeFit = null, typePlan = null,
+          letterBase = 0 } = opts;
   const sizeOn = Number(letterSizeVar) > 0;
   const animOn = letterAnim && letterAnim !== "off";
-  if (!sizeOn && !animOn) return text;
+  const colorLettersOn = levelHasLetterColor(colorMode) && !!wordColorObj;
+  const cutLettersOn = cut === "letter";
+  const typeOn = !!typePlan && !!typeFit;
+  if (!sizeOn && !animOn && !colorLettersOn && !cutLettersOn && !typeOn) return text;
 
   const letters = splitGraphemes(text);
   // Nothing to vary in a single grapheme, and animating it would be a no-op.
@@ -546,7 +669,39 @@ function letterNodes(text, opts) {
       const pct = letterSizePct(letterSizeVar, seed, wordIndex, base + i);
       if (pct) style.fontSize = pct;
     }
+    // Per-letter colour. letterColor returns the WORD's colour unchanged when the
+    // level has no per-letter step, so this is safe to call whenever colour is on
+    // and costs nothing when it is not.
+    if (colorLettersOn) {
+      const lc = letterColor(colorMode, seed, colorHue, cueIndex, wordOrdinal, i, wordColorObj);
+      if (lc) style.color = lc.css;
+    }
+    // --cut letter: ROTATION ONLY. No lift, no clip -- both cut the headline
+    // bar, which is the whole limit on this effect. See src/cut.js.
+    let cutTransform = "";
+    if (cutLettersOn) {
+      const cl = letterCut(cut, seed, cueIndex, wordOrdinal, i);
+      if (cl) cutTransform = cl.transform;
+    }
+    // --type: this letter's place in the typing chain. `letterBase` is how many
+    // graphemes precede this WORD, so the stagger continues across the word
+    // boundary instead of restarting -- otherwise the last letter of one word
+    // and the first of the next land on the same frame.
+    if (typeOn) {
+      const unitIndex = levelIsLetterwise(type)
+        ? letterBase + i
+        : wordOrdinal;
+      Object.assign(style, typingState(type, unitIndex, typeFit.step, typeFit.dur, elapsed));
+    }
     if (animOn) Object.assign(style, letterState(letterAnim, elapsed, i));
+    // The cut's rotation is COMPOSED with the letter animation's own transform,
+    // never assigned over it: `letterState` may also produce a transform (rise,
+    // drop, slide, tumble) and two writers to one key is gotcha 12. The letter's
+    // own movement stays rightmost so it remains the outermost gesture.
+    if (cutTransform) {
+      const own = style.transform || "";
+      style.transform = own ? `${own} ${cutTransform}` : cutTransform;
+    }
     return (
       <span
         key={i}
@@ -694,7 +849,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, amplitudes }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes }) => {
   // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
   // render.mjs produced; null when there is none, and pulseGlow falls back to a
   // slow breath rather than to nothing.
@@ -840,6 +995,40 @@ const frameStyle = {
   padding: "0 8vw",
 };
 
+/**
+ * --scanlines: one repeating gradient across the whole overlay.
+ *
+ * BRIGHT, never dark, and that is not a taste decision. Under Add blending
+ * output = base + overlay, so a dark band adds nothing and would be invisible --
+ * the effect would render, the log would say it was on, and the file would look
+ * exactly the same as one without it. Under Screen blending a dark band DOES
+ * show, so a dark scanline set is available there via --scanline-color.
+ *
+ * It is one element on the root rather than something applied to the words,
+ * because it must not interact with the words' transforms -- a scanline that
+ * rotated with the text would be a scanline no longer.
+ */
+function scanlineStyle(bands, alpha, color) {
+  if (!(bands > 0)) return null;
+  const gap = 100 / bands;
+  return {
+    position: "absolute",
+    inset: 0,
+    pointerEvents: "none",
+    zIndex: 50,
+    backgroundImage:
+      `repeating-linear-gradient(180deg, ${color} 0%, ${color} ` +
+      `${(gap * 0.5).toFixed(3)}%, rgba(0,0,0,0) ${(gap * 0.5).toFixed(3)}%, ` +
+      `rgba(0,0,0,0) 100%)`,
+    opacity: alpha,
+  };
+}
+
+// Built once per frame, above the lyrics so it sits over them, and null when the
+// flag is absent so a normal render builds no extra node.
+const scanEl = scanlineStyle(Number(scanlines) || 0, Number(scanlineAlpha) || 0.1, "#ffffff");
+const scan = scanEl ? <AbsoluteFill style={scanEl} /> : null;
+
 // The opening and closing cards sit under the lyrics, so z-order is a non-issue
 // and there is only one place they have to be remembered.
 const opener = titleCard || titleCardOutro ? (
@@ -865,6 +1054,7 @@ if (idx < 0) {
     <AbsoluteFill style={{ ...frameStyle, alignItems: "center", justifyContent: "center" }}>
       {song}
       {opener}
+      {scan}
     </AbsoluteFill>
   );
 }
@@ -960,7 +1150,21 @@ function renderCue(cueObj, isPrev, life) {
   // "the whole line arrives at once" is the point of the phrase unit, and
   // popping the letters one at a time would be the word unit wearing a
   // different hat.
-  const spans = unitIsWord && (anim !== "off" || lAnim !== "off" || Number(letterVar) > 0);
+  // Per-word colour needs per-word spans, so it joins the conditions that build
+  // them. Without this, --color-mode wild would render every word the same
+  // colour: the spans are what the per-word colour is attached to.
+  const colorOn = COLOR_LEVELS.includes(colorMode) && colorMode !== "off";
+  // The cut-paper look needs per-word spans too, for the same reason. And a
+  // PHRASE unit deliberately has none -- so the cut and the colour both fall back
+  // to being WHOLE-LINE properties on a phrase presentation. That is not a
+  // workaround: a phrase line is one gesture, and one colour and one angle for
+  // one gesture is correct rather than reduced.
+  const cutOn = CUT_LEVELS.includes(cut) && cut !== "off";
+  const typeOn = TYPE_LEVELS.includes(type) && type !== "off";
+  const spans = unitIsWord && (
+    anim !== "off" || lAnim !== "off" || Number(letterVar) > 0 ||
+    colorOn || cutOn || typeOn
+  );
 
   let size = fontSize;
   if (spans) {
@@ -978,6 +1182,16 @@ function renderCue(cueObj, isPrev, life) {
   const motionId = motionAt(cueObj.index);
   const motionPrm = motionId ? motionParams(master, cueObj.index, motionLevel) : null;
 
+  // Banded and centred placements have a bounded width, so they wrap and need
+  // the fit. Roam does not: its anchor is already chosen so a 60vw block fits,
+  // and fitting it would shrink roam relative to every other mode.
+  //
+  // RESOLVED BEFORE `content` on purpose. animatedWords() needs the real pixel
+  // size to scale the cut effect's lift and its torn edge, and it cannot work it
+  // out from a fontSize percentage that the fit has not been applied to yet.
+  const bandWidth = g.kind === "roam" ? 60 : g.width;
+  const shown = g.kind === "roam" ? size : fit(cueObj.text, size, bandWidth);
+
   const content = spans
     ? animatedWords(cueObj.text, {
         seed: master, index: cueObj.index, anim, sizeMode, sizeVar, t, sizeDrift,
@@ -986,22 +1200,62 @@ function renderCue(cueObj, isPrev, life) {
         motionLevel, motionId, motionPrm,
         // The composition layers, plus this cue's own amplitude for the glow.
         depthLevel: depth, amplitude: cueAmplitude(cueObj.index),
+        // Per-word and per-letter colour. The mode is validated in render.mjs
+        // against the real list, and defaulted here as well because Remotion
+        // resolves the composition BEFORE inputProps are applied -- an undeclared
+        // prop arrives as undefined, and `undefined` must not be a colour level.
+        colorMode: colorOn ? colorMode : "off",
+        colorHue: Number.isFinite(Number(colorHue)) ? Number(colorHue) : 210,
+        colorScheme, cut, type, stroke, strokeColor, baseSize: shown,
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)
       : cueObj.text;
 
-  // Banded and centred placements have a bounded width, so they wrap and need
-  // the fit. Roam does not: its anchor is already chosen so a 60vw block fits,
-  // and fitting it would shrink roam relative to every other mode.
-  const bandWidth = g.kind === "roam" ? 60 : g.width;
-  const shown = g.kind === "roam" ? size : fit(cueObj.text, size, bandWidth);
+  // --cut / --color-mode on a PHRASE unit, which has no word spans.
+  //
+  // This block exists because the first version of colour only painted word
+  // spans. Phrase presentations deliberately build none, so with `--mode mix
+  // --mix-block 8` the first three blocks of a 48-line song rendered in plain
+  // white while the last three were coloured -- no error, no warning, and a
+  // plausible-looking file. Nothing but looking at a frame finds that.
+  const lineHue = Number.isFinite(Number(colorHue)) ? Number(colorHue) : 210;
+  const lc = colorOn ? lineColor(colorMode, colorScheme, master, lineHue, cueObj.index) : null;
+  const grad = colorOn && colorGradient
+    ? gradientCss(colorMode, colorScheme, master, lineHue, cueObj.index)
+    : null;
+  // A phrase line gets ONE cut angle, because it is one clipping.
+  const phraseCut = cutOn ? wordCut(cut, master, cueObj.index, 0, fontSize) : null;
+  const phraseCutT = phraseCut ? wordCutTransform(phraseCut) : "";
 
   const base = {
     fontFamily: FONT_FAMILY,
     fontWeight: 700,
     ...(LEGACY_FONT_FAMILY ? { fontWeight: 400 } : {}),
-    color,
+    // Colour: the per-word colour when there are spans, otherwise the line's.
+    color: lc ? lc.css : color,
+    ...(grad
+      ? {
+        // background-clip: text paints a gradient through the glyphs without
+        // touching their geometry, so it cannot step the shirorekha the way a
+        // per-letter colour or size would.
+        backgroundImage: grad,
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+        // A transparent colour is what makes the clip show the gradient rather
+        // than the fill, so it replaces the line colour ONLY while a gradient is
+        // on -- both cannot be set, and the gradient is the one that was asked
+        // for.
+        WebkitTextFillColor: "transparent",
+      }
+      : {}),
+    // --stroke. A hairline on the glyph outline. It changes no metric, so the
+    // shirorekha is untouched, and it is the thing that keeps white text legible
+    // over a bright pool of light on stage. See the blend warning on the flag:
+    // a DARK stroke is invisible under pure Add and works under Screen.
+    ...(Number(stroke) > 0
+      ? { WebkitTextStroke: `${Number(stroke).toFixed(2)}px ${strokeColor || "#000000"}` }
+      : {}),
     textShadow: shadow,
     fontSize: shown,
     lineHeight: 1.32,

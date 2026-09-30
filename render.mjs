@@ -61,6 +61,40 @@ import {
 // implementations, so the validator and the code cannot disagree -- the same
 // reason the word/letter pools moved to src/anim-pools.mjs.
 import { DEPTH_LEVELS } from "./src/depth.js";
+
+// --color-mode levels, from src/color.js. Validated here against the real list
+// for the same reason --depth is: an unknown level must be an error, not a
+// silent "off", because "you asked for colour and got white" is indistinguishable
+// from success at the command line.
+import { COLOR_LEVELS, COLOR_SCHEMES } from "./src/color.js";
+
+// The cut-paper levels. Same shape of argument as --depth and --color-mode:
+// an unknown level is an error rather than a silent "off".
+import { CUT_LEVELS } from "./src/cut.js";
+
+// The typing levels. Declared here rather than in src/typing.js only so the
+// error message is generated from the same list the component validates against
+// -- the anim-pools.mjs lesson, which was a pool that grew while the validator
+// rejected every new entry.
+import { TYPE_LEVELS } from "./src/typing.js";
+
+// Which CLI flag owns each prop, so --loudest can ask "was this asked for?"
+// without a second hand-written list. A copy of this map inside the loudest
+// block is how it silently overwrote itself the first time.
+const CLI_FOR_PROP = {
+  depth: "--depth",
+  motion: "--motion",
+  wordAnim: "--word-anim",
+  letterAnim: "--letter-anim",
+  letterVar: "--letter-var",
+  sizeMode: "--size-mode",
+  mode: "--mode",
+  colorMode: "--color-mode",
+  colorScheme: "--color-scheme",
+  cut: "--cut",
+  type: "--type",
+  stroke: "--stroke",
+};
 const WORD_ANIM_LIST = WORD_ANIMS;
 const LETTER_ANIM_LIST = LETTER_ANIMS;
 const STYLE_ANIM_LIST = STYLE_ANIMS;
@@ -1231,9 +1265,47 @@ async function run(audioPath, lrcPath) {
     props.titleCardOutro = true;
   }
   if (style) props.style = style;
+
+  // --size-preset: the three sizes judged on Kali Kali, as one flag.
+  //
+  // These were chosen by rendering the SAME 130 seconds at three sizes and
+  // looking at them, which is the only way this was ever going to be decided --
+  // and the differences are not subtle, because --size is a floor rather than a
+  // peak. The biggest word on screen is:
+  //
+  //     peak = base * (1 + size-var) * (1 + size-drift)
+  //
+  // so the original 150/0.20/0.18 reached 212px and filled ~90% of a 1080p frame,
+  // which is too much for a layer that has to sit on top of live video. All three
+  // rungs keep the per-word size variation; they differ only in how far it goes.
+  //
+  //   large   120 / 0.10 / 0.06   peak ~140px   ~62% of frame width
+  //   medium  105 / 0.08 / 0.05   peak ~119px   ~53%    <- the house size
+  //   small   90 / 0.06 / 0.04    peak ~99px    ~45%
+  //
+  // It is a PRESET, not an override: an explicit --size, --size-var or
+  // --size-drift wins, so this can never quietly override a deliberate number.
+  // Resolved here, before any of them are read, because props.fontSize is set
+  // above the block that computes the variance.
+  const SIZE_PRESETS = {
+    small:  { size: 90,  sizeVar: 0.06, sizeDrift: 0.04 },
+    medium: { size: 105, sizeVar: 0.08, sizeDrift: 0.05 },
+    large:  { size: 120, sizeVar: 0.10, sizeDrift: 0.06 },
+  };
+  const sizePresetArg = flag("--size-preset");
+  const SIZE_PRESET = sizePresetArg ? SIZE_PRESETS[sizePresetArg] : null;
+  if (sizePresetArg && !SIZE_PRESET) {
+    console.error('  Unknown --size-preset "' + sizePresetArg + '". Use one of: ' +
+      Object.keys(SIZE_PRESETS).join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
   // --size is checked with `flag()` first so that an absent flag leaves the
   // component default alone, and `--size 0` is impossible (0 is not a size).
+  // SIZE_PRESET supplies a default; an explicit --size always wins (see the
+  // preset table above). `flag()` first, so an absent flag cannot zero the size.
   if (flag("--size") && numFlag("--size") > 0) props.fontSize = numFlag("--size");
+  else if (SIZE_PRESET) props.fontSize = SIZE_PRESET.size;
   if (flag("--color")) props.color = flag("--color");
   if (flag("--position")) props.position = flag("--position");
   const seed = flag("--seed") || parsed.title || title;
@@ -1310,6 +1382,73 @@ async function run(audioPath, lrcPath) {
       " (tracking, baseline drift, arc, coupled depth, sequenced reveal," +
       " chromatic, glow)");
   }
+
+  // --color-mode: per-word and per-letter COLOUR (src/color.js).
+  //
+  // Off by default, for the same reason --depth is: a colour nobody chose is a
+  // look nobody chose, and white-on-black is what this deliverable IS -- it gets
+  // blended Add/Screen over a camera feed, so a dark or heavily tinted word does
+  // not show up on the footage at all. See the overlay note at the top of
+  // src/color.js for why the ranges are bounded rather than full-spectrum.
+  //
+  // An UNKNOWN level is an error rather than a fallback to "off". Every other
+  // unknown string flag in this file falls back to something plausible, and the
+  // result is a file nobody can explain; here a typo would produce plain white
+  // text with exit 0, which is exactly the shape of gotcha 31.
+  const colorArg = flag("--color-mode") || "off";
+  if (!COLOR_LEVELS.includes(colorArg)) {
+    console.error('  Unknown --color-mode "' + colorArg + '". Use one of: ' +
+      COLOR_LEVELS.join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
+  props.colorMode = colorArg;
+  // --color-scheme: WHICH colours go together. The level above says how MUCH
+  // colour; this says what is allowed to sit next to what, which is the
+  // difference between a palette and six unrelated hues. Default is analogous --
+  // tonal and safe. `rainbow` reproduces the pre-scheme behaviour exactly, so a
+  // look you have already seen is still reachable by name.
+  const schemeArg = flag("--color-scheme") || "analogous";
+  if (!COLOR_SCHEMES.includes(schemeArg)) {
+    console.error('  Unknown --color-scheme "' + schemeArg + '". Use one of: ' +
+      COLOR_SCHEMES.join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
+  props.colorScheme = schemeArg;
+  // A phrase line is ONE block of text, so a gradient across it is one property
+  // on the line element -- the cheapest colour effect here, and the one that
+  // needs no span per letter at all.
+  props.colorGradient = has("--color-gradient");
+  // --color-hue: the palette's anchor, in degrees. Without it every word drifts
+  // around 0deg, which is red and reads as an error rather than a palette. 210 is
+  // a cool cyan-blue, which sits well over most footage; any degree is accepted.
+  const hueRaw = numFlag("--color-hue");
+  props.colorHue = Number.isFinite(hueRaw) ? ((hueRaw % 360) + 360) % 360 : 210;
+  if (colorArg !== "off") {
+    console.log("  colour  : " + colorArg + " per-word" +
+      (colorArg === "calm" ? "" : " and per-letter") +
+      ", anchored at " + props.colorHue + "deg");
+  }
+
+  // --loudest: every layer at once, in one flag.
+  //
+  // It exists because the alternative was nine flags typed by hand into five
+  // commands, and that is how one of them ends up with a different --size-var and
+  // produces a file that does not match its eight siblings with nothing to show
+  // the difference. It is a SET OF DEFAULTS and nothing more: every single one of
+  // them yields to an explicit flag, so `--loudest --size 90` is the full
+  // treatment at a smaller size rather than a fight between two settings.
+  //
+  // --loudest is applied at the END of this function, not here. It was here
+  // first, and it was silently overwritten: this block set props.sizeVar = 0.08,
+  // and the size block further down -- which cannot tell "the flag was absent"
+  // from "the flag asked for the default" -- reassigned 0.15 a hundred lines
+  // later. The render looked plausible and was the wrong size, which is the
+  // exact failure this repo keeps re-learning.
+  //
+  // The rule the move encodes: a preset fills in what nobody asked for, so it
+  // has to be the LAST writer. See applyLoudest() near the end of this function.
 
   // --styled: the house style (styles/house.md) as DEFAULTS -- title cards on,
   // mix placement, karaoke words, letter pop at the 0.03 cap, size 128, white
@@ -1425,9 +1564,12 @@ async function run(audioPath, lrcPath) {
   }
   props.sizeMode = SIZE_MODE;
   const sizeVarRaw = numFlag("--size-var");
+  // Three fallbacks in priority order: the preset, then the documented default.
+  // Never 0 -- an absent flag is NaN, and NaN falling through to 0 would silently
+  // switch size variation off (gotcha 28).
   props.sizeVar = Number.isFinite(sizeVarRaw)
     ? Math.min(Math.max(sizeVarRaw, 0), 0.45)
-    : 0.15;   // absent -> NaN -> the DOCUMENTED default, not 0 (gotcha 28)
+    : SIZE_PRESET ? SIZE_PRESET.sizeVar : 0.15;
 
   // --size-drift: a second, SLOWER size axis.
   //
@@ -1446,7 +1588,9 @@ async function run(audioPath, lrcPath) {
   const driftRaw = numFlag("--size-drift");
   props.sizeDrift = Number.isFinite(driftRaw)
     ? Math.min(Math.max(driftRaw, 0), 0.35)
-    : 0;      // absent -> 0: an OFF-by-default feature, like --motion (gotcha 30)
+    : SIZE_PRESET ? SIZE_PRESET.sizeDrift : 0;
+  // absent -> 0 (or the preset's value): an OFF-by-default feature, like
+  // --motion (gotcha 30)
   if (props.sizeDrift > 0 && SIZE_MODE === "off") {
     console.warn(
       "  note: --size-drift needs per-word spans, so it is doing nothing with\n" +
@@ -1483,6 +1627,135 @@ async function run(audioPath, lrcPath) {
   props.letterVar = Number.isFinite(letterVarRaw)
     ? Math.min(Math.max(letterVarRaw, 0), 0.03)
     : 0;   // absent -> NaN -> 0, which IS the documented default here
+
+  // --cut: the newspaper / cut-paper look (src/cut.js). Every word becomes a
+  // clipping at its own angle and height, with a torn edge under it.
+  //
+  // OFF by default, and the same reason as --depth: this one deliberately breaks
+  // the formation. It is allowed to look hand-assembled, which is a look, and a
+  // look nobody chose is a look nobody can ask for again.
+  const cutArg = flag("--cut") || "off";
+  if (!CUT_LEVELS.includes(cutArg)) {
+    console.error('  Unknown --cut "' + cutArg + '". Use one of: ' +
+      CUT_LEVELS.join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
+  props.cut = cutArg;
+  if (cutArg !== "off") {
+    console.log("  cut      : " + cutArg +
+      (cutArg === "letter"
+        ? "  (per word, plus per-LETTER rotation at the measured-safe angle cap)"
+        : "  (per word: angle, lift, scale, torn edge)"));
+  }
+
+  // --type: the typed-on reveal. Letters appear left to right and STAY.
+  //
+  // It is a per-letter OPACITY/CLIP reveal, which is the safe side of the
+  // shirorekha rule: a letter appearing does not move it. The word-level and
+  // line-level parts are the same thing at a coarser grain, and the difference
+  // is where the stagger is counted from -- which is why it is one flag with
+  // three levels rather than three flags.
+  //
+  // It is also the one effect here that MUST finish inside the cue's end: a
+  // letter that is still arriving when the line fades out is the lingering-lyric
+  // bug, and a typing reveal is nothing BUT letters arriving late. The delay
+  // chain is fitted to the cue's span for the same reason `sequence` is (see
+  // src/depth.js) and check_typing.mjs asserts it.
+  const typeArg = flag("--type") || "off";
+  if (!TYPE_LEVELS.includes(typeArg)) {
+    console.error('  Unknown --type "' + typeArg + '". Use one of: ' +
+      TYPE_LEVELS.join(", ") + ".");
+    process.exitCode = 1;
+    return;
+  }
+  props.type = typeArg;
+  if (typeArg !== "off") console.log("  type     : " + typeArg + "  (letters type on and hold)");
+
+  // --stroke: a hairline outline on the glyphs, for legibility over bright
+  // footage.
+  //
+  // AND THE HONEST WARNING, because this is the second time in this repo that a
+  // "dark" effect turns out to do nothing at all:
+  //
+  //   Add   blending: output = base + overlay. A DARK overlay pixel adds NOTHING.
+  //                   So a black outline is INVISIBLE under pure Add.
+  //   Screen blending: output = 1-(1-base)(1-overlay). A black overlay pixel
+  //                   DOES darken the footage.
+  //
+  // This project is blended "Add/Screen" over a Videosync2 camera feed, so which
+  // one you actually use decides whether --stroke does anything at all. Under
+  // pure Add, use --stroke-color white for a glow-style rim instead; under
+  // Screen, the default dark stroke is correct. This is why --stroke-color is a
+  // flag rather than a constant.
+  const strokeRaw = numFlag("--stroke");
+  if (Number.isFinite(strokeRaw)) {
+    props.stroke = Math.min(Math.max(strokeRaw, 0), 8);
+    props.strokeColor = flag("--stroke-color") || "#000000";
+  }
+
+  // --scanlines: additive horizontal bands across the WHOLE overlay.
+  //
+  // Bright, not dark, for the reason above: under Add blending a dark band adds
+  // nothing. Applied as one repeating gradient on the root, so it costs one
+  // element and cannot interact with the words' own transforms.
+  const scanRaw = numFlag("--scanlines");
+  if (Number.isFinite(scanRaw) && scanRaw > 0) {
+    props.scanlines = Math.min(scanRaw, 60);
+    props.scanlineAlpha = Number.isFinite(numFlag("--scanline-alpha"))
+      ? Math.min(Math.max(numFlag("--scanline-alpha"), 0), 1)
+      : 0.10;
+    console.log(
+      "  scanlines: " + props.scanlines + " bands at " +
+      (props.scanlineAlpha * 100).toFixed(0) + "% (bright -- a dark band adds no light)"
+    );
+  }
+
+  // --loudest: every layer at once, applied LAST.
+  //
+  // It exists because the alternative was nine flags typed by hand into five
+  // commands, and that is how one of them ends up with a different --size-var
+  // and produces a file that does not match its eight siblings with nothing to
+  // show the difference.
+  //
+  // It is a SET OF DEFAULTS and nothing more: every one yields to an explicit
+  // flag, so `--loudest --size 90` is the full treatment at a smaller size
+  // rather than a fight between two settings. `flag()` is re-read here rather
+  // than remembered from earlier, because "was this asked for" is the only
+  // question that matters and argv is the only honest answer to it.
+  //
+  // This block sat BEFORE the size, letter and colour blocks and was silently
+  // overwritten by all three -- the render looked plausible and was the wrong
+  // size. A preset fills in what nobody asked for, so it has to be the last
+  // writer. If you add another flag, add it here and nowhere else.
+  if (has("--loudest")) {
+    const set = (k, v) => { if (!flag(CLI_FOR_PROP[k])) props[k] = v; };
+    set("depth", "wild");
+    set("motion", "wild");
+    set("wordAnim", "mix");
+    set("letterAnim", "pop");
+    set("letterVar", 0.03);
+    set("sizeMode", "word");
+    set("mode", "mix");
+    set("colorMode", "wild");
+    // These three have no string flag of their own -- they are numbers, and a
+    // number's flag is absent-or-present, not present-or-absent-string -- so
+    // they are checked directly rather than through the map above.
+    if (!flag("--size") && !sizePresetArg) props.fontSize = 105;
+    if (!numFlag("--size-var") && !sizePresetArg) props.sizeVar = 0.08;
+    if (!numFlag("--size-drift") && !sizePresetArg) props.sizeDrift = 0.05;
+    // --size-preset, if given, is the better answer than the hardcoded 105, and
+    // it has already been applied above -- so it is left alone here.
+    if (!flag("--mix-block")) props.mixBlock = 8;
+    if (!flag("--color-hue")) props.colorHue = 210;
+    if (!flag("--shadow")) props.shadow = "0 3px 16px rgba(0,0,0,0.85)";
+    console.log(
+      "  loudest  : depth wild, motion wild, word mix, letter pop at 0.03,\n" +
+      "             size-mode word, mode mix (block 8), colour wild at 210deg,\n" +
+      "             size " + props.fontSize + " var " + props.sizeVar +
+      " drift " + props.sizeDrift
+    );
+  }
   // mp4 has no alpha: paint the background black so Add/Screen blend keying
   // is exact. mov keeps a transparent background.
   props.background = FORMAT === "mov" ? "transparent" : "#000000";
@@ -1772,7 +2045,34 @@ if (BATCH) {
       "    --letter-var <n>   per-letter size, 0..0.03 (clamped hard: the",
       "                      shirorekha is continuous across a word)",
       "    --title-card / --title-card-outro",
-      "    --color <#hex>   text colour",
+      "    --color <#hex>   text colour (one colour for the whole render)",
+      "    --color-mode <m> off (default) | calm | vivid | wild -- seeded",
+      "                      per-word colour, and per-letter from vivid up.",
+      "                      Ranges are bounded for the Add/Screen overlay:",
+      "                      lightness is floored so a word cannot go dark",
+      "                      over footage. See src/color.js.",
+      "    --color-hue <deg>  palette anchor, 0..359 (default 210)",
+      "    --size-preset <n> small | medium | large -- the three sizes judged",
+      "                      on Kali Kali. medium is the house default; any",
+      "                      explicit --size/--size-var/--size-drift wins.",
+      "    --cut <m>     off (default) | word | letter -- the newspaper look:",
+      "                      every word a clipping at its own angle and height",
+      "                      with a torn edge. `letter` adds per-letter",
+      "                      rotation, capped at LETTER_ANGLE_CAP.",
+      "    --type <m>   off (default) | line | word | letter -- typed-on",
+      "                      reveal. Letters arrive left to right and STAY.",
+      "                      The delay chain is fitted to the cue's span.",
+      "    --stroke <px>    hairline on the glyph outline, 0..8",
+      "    --stroke-color <#hex>  default #000000. NOTE: a DARK stroke only",
+      "                      shows under Screen blending; under pure Add it",
+      "                      adds no light and is invisible.",
+      "    --scanlines <n>  bright bands over the whole overlay (bright, because",
+      "                      a dark band adds nothing under Add blending)",
+      "    --loudest     every layer at once: --depth wild --motion wild",
+      "                      --word-anim mix --letter-anim pop --letter-var 0.03",
+      "                      --size-mode word --mode mix --mix-block 8",
+      "                      --color-mode wild --color-hue 210, size 105.",
+      "                      A SET OF DEFAULTS: any explicit flag wins.",
       "    --seed <text>    animation seed (default: title from the .lrc)",
       "    --batch <dir>    render every audio+.lrc pair in a folder",
       ""

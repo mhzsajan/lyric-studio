@@ -132,7 +132,22 @@ console.log("\n=== 2. the check list in AGENTS.md is not stale ===");
     "every check on disk is named in AGENTS.md (" + onDisk.length + " found)",
     unlisted.join(", "));
 
-  const ghost = [...listed].filter((c) => !onDisk.includes(c));
+  // A "ghost" is a name that exists NOWHERE. It used to mean "not in this repo's
+  // scripts/", which stopped being true when the font repo took ownership of the
+  // font facts and two checks moved there: AGENTS.md names them, correctly
+  // attributed, and this reported them as checks that do not exist -- a false
+  // failure, which is the kind that gets silenced by deleting the honest
+  // sentence rather than by fixing the check.
+  //
+  // So a name that exists in the SIBLING repo is not a ghost. What must still
+  // fail is a name in neither repo, and that is what this catches.
+  const fontRepoChecks = fs.existsSync(path.join(FONT_REPO, "scripts"))
+    ? fs.readdirSync(path.join(FONT_REPO, "scripts"))
+        .map((f) => /^(check_.*)\.(?:mjs|py)$/.exec(f))
+        .filter(Boolean).map((m) => m[1])
+    : [];
+  const ghost = [...listed].filter(
+    (c) => !onDisk.includes(c) && !fontRepoChecks.includes(c));
   ok(ghost.length === 0, "AGENTS.md names no check that does not exist", ghost.join(", "));
 
   // The prose count has to match the list. Last time it said "All five" while
@@ -164,16 +179,18 @@ console.log("\n=== 2. the check list in AGENTS.md is not stale ===");
 //
 //   1. FENCES. A bash block containing "# 1. does the song's text survive..."
 //    is a COMMENT, not an H1. Without tracking ``` the parser sees two extra
-//    headings in FONTS-VERIFIED.md, both of them prose in a code block.
-//   2. THE DOCUMENT TITLE IS NOT A SECTION. FONTS-VERIFIED.md's H1 is "Fonts:
-//    what is actually verified, and how to check a new one" -- it contains
-//    "verified", so a naive search matched it first and treated the WHOLE FILE
-//    as the WORKING table. Only level >= 2 is a section.
-//   3. WORK AND FAIL OVERLAP. RENDER-TESTED.md's failing table is headed
-//    "NOT WORKING", which CONTAINS "working". A matcher for "working" therefore
-//    finds the FAILED table too, and a matcher for "fail" finds it as well, so
-//    both classifications claimed the same rows. They must be mutually
-//    exclusive, which is stated in isWork / isFail below.
+//    headings, both of them prose in a code block.
+//   2. THE DOCUMENT TITLE IS NOT A SECTION. A title like "Fonts: what is
+//    verified" contains "verified", so a naive search matched it first and
+//    treated the WHOLE FILE as a section. Only level >= 2 is a section.
+//
+// The WORKING/FAILED classifiers that used to sit below this parser are GONE,
+// and their absence is the point: they existed to split two font-verdict tables
+// across two repos, and there is no pair to split any more -- the font repo owns
+// one verdicts.json. They are left out rather than left in, because a check
+// helper with no caller is a second answer to a question nobody is asking, and
+// the next person to edit this file would reasonably assume it still meant
+// something.
 const headings = (text) => {
   const out = [];
   let fence = null;
@@ -189,150 +206,88 @@ const headings = (text) => {
   return out;
 };
 
-// Mutually exclusive by construction: anything that reads as a failure is not a
-// working table, however many of the words it also contains.
-const NEGATIVE = /fail|not working|do not use|avoid|broken/i;
-const isWork = (h) => h.level >= 2 && /working|verified|proven|pass/i.test(h.text) && !NEGATIVE.test(h.text);
-const isFail = (h) => h.level >= 2 && NEGATIVE.test(h.text);
-
-// The body of the section whose heading `classify` accepts first: from the line
-// after that heading to the next heading of the same or higher level.
-const sectionUnder = (text, classify) => {
-  const lines = text.split(/\r?\n/);
-  const all = headings(text);
-  const at = all.findIndex(classify);
-  if (at < 0) return null;
-  const level = all[at].level;
-  const out = [];
-  for (let i = all[at].line + 1; i < lines.length; i++) {
-    const m = /^(#{1,6})\s+/.exec(lines[i]);
-    if (m && m[1].length <= level) break;
-    out.push(lines[i]);
-  }
-  return out.join("\n");
-};
-
-// Every backticked slug-shaped token in a section.
-//
-// Not just table rows. The WORKING lists are tables, but the FAILED lists are
-// PROSE -- bolded category headings with the slugs inline -- so a row scan found
-// 0 failed fonts in both files and reported "no conflicts" from an empty set,
-// which is the most dangerous kind of green. The token shape does the filtering:
-// a font slug is [a-z0-9][a-z0-9-]*, which rejects the Devanagari examples
-// (`saangai`), the raw-ASCII output (`hfpm,`), file names (`sweep.json`) and
-// placeholders (`<slug>`) that share those sections.
-const slugsInSection = (text, classify) => {
-  const seg = sectionUnder(text, classify);
-  if (seg === null) return null;
-  const out = new Set();
-  for (const m of seg.matchAll(/`([a-z0-9][a-z0-9-]*)`/g)) out.add(m[1]);
-  return out;
-};
-
-console.log("\n=== 3. the two font-verdict files list the SAME working fonts ===");
+console.log("\n=== 3. this repo holds NO font verdicts of its own ===");
 {
-  // A mirror pair, hand-synced, is a mirror pair that drifts -- and this exact
-  // pair has already drifted once: abhinav was certified from a clean round-trip
-  // and then marked failed by eye, in one file before the other.
+  // WHAT REPLACED WHAT, and why this is not a loss of coverage.
   //
-  // COUNT THE ROWS, do not scrape the prose. The first version of this check
-  // regexed for "N fonts" in the text and reported 8 against 11, which looked
-  // like real drift. It was not: FONTS-VERIFIED.md states no count in prose at
-  // all (8 Preeti + 3 Unicode = 11, and RENDER-TESTED.md's heading says 11).
-  // A number in a document and the contents of a document are different claims,
-  // and only one of them is the data.
-  const a = path.join(ROOT, "docs", "FONTS-VERIFIED.md");
-  const b = path.join(FONT_REPO, "docs", "RENDER-TESTED.md");
-  if (!fs.existsSync(b)) {
+  // This section used to cross-check a MIRROR PAIR: docs/FONTS-VERIFIED.md here
+  // against docs/RENDER-TESTED.md in the font repo, because both listed which
+  // fonts worked. A mirror pair is a second thing to be wrong, and it had already
+  // drifted once -- abhinav was certified from a clean round-trip in one file and
+  // marked failed by eye in the other, which is how a font ended up "working" and
+  // broken at the same time.
+  //
+  // The font repo then took sole ownership: ONE authority, verdicts.json, four
+  // states, checked by the font repo's own scripts/check_verdicts.py. There is no
+  // pair left to cross-check, and pretending otherwise is worse than useless:
+  // FONTS-VERIFIED.md was deleted, AGENTS.md still pointed at it, and this section
+  // threw ENOENT on every run. A check that crashes is a check nobody runs, and
+  // the failure it was watching for is still real.
+  //
+  // So the drift is now watched from the other side. The invariant that replaces
+  // it is the one the split was made for: if a font verdict reappears in THIS
+  // repo, it is already a second copy that can disagree with the authority,
+  // whether or not it happens to agree today.
+
+  const here = path.join(ROOT, "docs", "FONTS-VERIFIED.md");
+  ok(!fs.existsSync(here), "the deleted mirror doc has not come back", "docs/FONTS-VERIFIED.md");
+
+  // No second store. The authority is a JSON file in the other repo, and a second
+  // one here is the drift this section used to chase, one level down.
+  const strayStores = fs.existsSync(path.join(ROOT, "docs"))
+    ? fs.readdirSync(path.join(ROOT, "docs")).filter((f) => /verdict/i.test(f))
+    : [];
+  ok(strayStores.length === 0,
+    "no verdict store has been added to docs/ here", strayStores.join(", ") || "none");
+
+  // A doc may NAME font files -- --font-file paths, family names, the font repo
+  // itself. That is usage. What it may not do is CLAIM which fonts work, and a
+  // claim lives in a HEADING, so this reads headings rather than prose.
+  //
+  // Headings, not whole-file matching: the first attempt at this matched anywhere
+  // in the text and immediately reported four files, every one of them for the
+  // word "verdict" used correctly to say the repo does NOT hold verdicts. A check
+  // that fires on its own explanation is a check that trains you to ignore it.
+  //
+  // knowledge-repo-archive/ is excluded because it is a verbatim archive of a
+  // DELETED repo, kept for the font forensics and explicitly not to be edited.
+  const claim = /verdict|working\s+fonts?\b|fonts?\s+that\s+work|not\s+working|broken\s+fonts?/i;
+  const offenders = [];
+  for (const d of docs) {
+    if (d.startsWith("docs/knowledge-repo-archive/")) continue;
+    for (const h of headings(fs.readFileSync(path.join(ROOT, d), "utf8"))) {
+      if (h.level >= 2 && claim.test(h.text)) offenders.push(d + " -> " + h.text);
+    }
+  }
+  ok(offenders.length === 0,
+    "no section heading in this repo claims a font verdict",
+    offenders.join(" | ") || "none");
+
+  // The authority must actually be reachable and readable, or "we hold no
+  // verdicts" is just a tidier way of holding none at all.
+  if (!fs.existsSync(FONT_REPO)) {
     console.log("  SKIP  sibling font repo not present at " + FONT_REPO);
   } else {
-    const ta = fs.readFileSync(a, "utf8");
-    const tb = fs.readFileSync(b, "utf8");
-    const workA = slugsInSection(ta, isWork);
-    const workB = slugsInSection(tb, isWork);
-
-    ok(workA && workA.size > 0, "FONTS-VERIFIED.md has a readable WORKING table",
-      workA ? workA.size + " fonts" : "no WORKING section heading found");
-    ok(workB && workB.size > 0, "RENDER-TESTED.md has a readable WORKING table",
-      workB ? workB.size + " fonts" : "no WORKING section heading found");
-
-    if (workA && workB) {
-      const onlyA = [...workA].filter((s) => !workB.has(s));
-      const onlyB = [...workB].filter((s) => !workA.has(s));
-      ok(onlyA.length === 0 && onlyB.length === 0,
-        "the two WORKING tables list the same fonts",
-        "only in FONTS-VERIFIED: " + (onlyA.join(", ") || "-") +
-        " | only in RENDER-TESTED: " + (onlyB.join(", ") || "-"));
-    }
-
-    // The failure that motivated all of this. A font must never be WORKING in
-    // one file and FAILED in the other, because whichever file a reader opens
-    // is what decides what they render.
-    const failA = slugsInSection(ta, isFail) || new Set();
-    const failB = slugsInSection(tb, isFail) || new Set();
-    const overlap = [...failA].filter((s) => workA && workA.has(s))
-      .concat([...failB].filter((s) => workB && workB.has(s)));
-    ok(overlap.length === 0,
-      "no font appears in both a WORKING and a FAILED table",
-      overlap.length ? overlap.join(", ") : "failed: " + failA.size + " + " + failB.size);
-
-    const conflict = [...new Set([...failA].filter((s) => workB && workB.has(s))
-      .concat([...failB].filter((s) => workA && workA.has(s))))];
-    ok(conflict.length === 0, "no font is WORKING in one file and FAILED in the other",
-      conflict.length ? conflict.join(", ") : "-");
-
-    // The stated pass count must agree with the table it is describing.
-    //
-    // This is the check that matters most, and the one that is currently RED.
-    // FONTS-VERIFIED.md says "7 of the 42 passed" and names those seven in
-    // parentheses, while the WORKING table above it still lists eleven. Four
-    // fonts -- ananda-lipi-bold-bt, himalayabold, katmandu, shreenath-bold --
-    // are in the table, in neither the named seven nor the failed prose, and all
-    // four are class=PREETI in sweep.json.
-    //
-    // It is deliberately NOT resolved here. "Delete the four" and "the four are
-    // fine, fix the prose" are both defensible, and picking wrongly either
-    // discards four working fonts or leaves four broken ones in the list people
-    // actually render from. Only a person who has looked at the glyphs can say
-    // which -- the abhinav lesson again: correct class, clean round-trip, full
-    // cmap, and still spelling words wrong.
-    const stated = /(\d+)\s+of\s+the\s+(\d+)\s+(?:handpicked\s+)?(?:passed|preferred|fonts)/i.exec(ta);
-    // The names beside the count may be backticked or bare. Accept both, then
-    // keep only tokens that are REAL slugs in sweep.json -- so a stray English
-    // word in the parenthetical cannot be mistaken for a font, and a typo'd
-    // name is visibly absent from the count rather than silently counted.
-    const knownSlugs = (() => {
+    const authority = path.join(FONT_REPO, "verdicts.json");
+    ok(fs.existsSync(authority), "the font repo's verdicts.json is reachable", "the one authority");
+    if (fs.existsSync(authority)) {
+      let states = null;
+      let fonts = null;
       try {
-        const s = JSON.parse(fs.readFileSync(path.join(FONT_REPO, "sweep.json"), "utf8"));
-        return new Set(s.map((e) => e.slug));
-      } catch { return null; }
-    })();
-    const namedList = (() => {
-      // "passed** (a, b, c)" -- the bold close sits between the word and the
-      // paren, so the gap has to tolerate '**'.
-      const m = /passed\s*\*{0,2}\s*\(([^)]*)\)/i.exec(ta);
-      if (!m) return null;
-      const toks = [...m[1].matchAll(/`?([a-z0-9][a-z0-9-]*)`?/g)].map((x) => x[1]);
-      return knownSlugs ? new Set(toks.filter((t) => knownSlugs.has(t))) : new Set(toks);
-    })();
-    if (stated && namedList) {
-      const claimed = Number(stated[1]);
-      ok(claimed === namedList.size,
-        "the stated pass count matches the list of fonts named beside it",
-        "says " + claimed + ", names " + namedList.size);
-      if (workA) {
-        const extra = [...workA].filter((s) => !namedList.has(s));
-        ok(extra.length === 0,
-          "the WORKING table contains exactly the fonts stated as passing",
-          extra.length
-            ? "in the table but not in the stated " + claimed + ": " + extra.join(", ")
-            : "table and prose agree");
-      }
-    } else {
-      console.log("  note  no 'N of the M passed (...)' sentence found to cross-check the table");
+        const v = JSON.parse(fs.readFileSync(authority, "utf8"));
+        // Read the structure rather than flattening it. The first attempt took
+        // every value in the file and reported "working, arya, broken,
+        // 2026-09-30, 35 lines" as a list of states -- which is a green that
+        // proves nothing, the exact shape this repo has been bitten by before.
+        states = Array.isArray(v._states) ? v._states.slice().sort() : null;
+        fonts = Object.keys(v.verdicts || {}).length;
+      } catch { states = null; }
+      ok(!!states && states.length === 4,
+        "verdicts.json parses and declares its four states",
+        states ? states.join(", ") : "unreadable or no _states");
+      ok(fonts > 0, "verdicts.json actually carries per-font verdicts", fonts + " fonts");
     }
   }
 }
-
 console.log(failed ? "\n  " + failed + " CHECK(S) FAILED\n" : "\n  all doc-reference checks passed\n");
 process.exit(failed ? 1 : 0);
