@@ -337,7 +337,7 @@ function animatedWords(text, opts) {
           sizeDrift, depthLevel = "off", amplitude = null,
           colorMode = "off", colorHue = 210, colorScheme = "analogous", accent = 1,
           cut = "off", type = "off", stroke = 0, strokeColor = "#000000",
-          baseSize = 105, wordFill, breakAfter = new Set() } = opts;
+          baseSize = 105, wordFill, breakAfter = new Set(), cutRoom = null } = opts;
 
   // The cue's own span and start, needed by the composition layers. A cue's
   // span is the budget every layer has to finish inside -- the same budget
@@ -1506,6 +1506,20 @@ function renderCue(cueObj, isPrev, life) {
         // Remotion reports as a bare frame number with no stack and no file.
         colorScheme, cut, type, stroke, strokeColor, baseSize: shown, accent,
         wordFill,
+        // `cutRoom` MUST be threaded down here, not just accepted by the
+        // composition's signature. That omission cost five renders: the prop was
+        // destructured on LyricOverlay, tearBar() read it inside animatedWords(),
+        // and animatedWords() had no such binding -- so every render that used
+        // --cut died at a random frame with "cutRoom is not defined".
+        //
+        // It is the SECOND time this exact shape has appeared here. The first was
+        // `typeLag`, which was listed on the composition's props and never passed
+        // to the function that consumed it. Remotion reports the result as a bare
+        // frame number with no file and no stack, because the ReferenceError is
+        // thrown from inside the composition at render time -- so no amount of
+        // parsing, bundling or unit-testing sees it. Only rendering does, which is
+        // why check_smoke.mjs now renders stills.
+        cutRoom,
         // --wrap: word indices after which a row ends. The breaks are emitted
         // INSIDE animatedWords' own output rather than by post-processing the
         // finished array, because the array is what the per-word animation is

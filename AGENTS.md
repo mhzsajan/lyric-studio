@@ -231,10 +231,10 @@ node scripts\check_all.mjs      # every self-contained suite. This is the comman
 node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 ```
 
-There are **26** check scripts, in three kinds. Only the first kind must be
+There are **27** check scripts, in three kinds. Only the first kind must be
 green before you commit, and `check_all.mjs` runs all of it:
 
-**1. Self-contained suites (21)** — pure functions of the source; no render, no
+**1. Self-contained suites (21 + smoke)** — pure functions of the source; no render, no
 font, no audio. Seconds each, and every one has caught a real bug here.
 
 | | guards |
@@ -249,6 +249,7 @@ font, no audio. Seconds each, and every one has caught a real bug here.
 | `check_wrap.mjs` | a long lyric line becomes **rows at full size**, not one shrunken row: balanced rather than greedy, and **never split inside a word** — Devanagari's shirorekha is continuous across a word, so a break inside one snaps the headline (gotcha 8). Runs a deliberately greedy and a deliberately word-splitting breaker and requires the assertions to reject both |
 | `check_camera.mjs` | the ṚITU piece's fall is **monotonic across all 7530 frames**. It is invisible in any single frame and load-bearing across four minutes: the frame where the scale decreases is the frame where the camera has arrived, which is the one thing the song refuses. Also that the instrumental breaks fall *faster* than the sung stanzas, and that the beat grid moves the **camera only** |
 | `check_typo.mjs` | the five advanced-typography techniques (`src/typo/`): **finite** across 825 calls including `q = NaN` — a NaN transform does not draw the character, which is the disappearing-word bug through a new door; **deterministic**; **inside a declared travel contract** the code is actually held to; **readable through the body of a cue** (a technique that fades a glyph past 0.25 is deleting a letter); and **no technique owns timing** — asserted by reading the signatures, because a technique that could delay a character pushes ink past the cue's end |
+| `check_smoke.mjs` | **renders one real frame of every composition**, with every layer on. This is the only instrument that sees a **missing binding**: `typeLag` and `cutRoom` were both destructured on `LyricOverlay` and read inside `animatedWords()`, and neither was passed to it — the module *parses*, all 21 other suites pass, and Remotion reports a bare frame number with no file and no stack. `cutRoom` cost five renders. Also asserts that the in-cue frame and the empty frame are **different pictures**, because a frame at the wrong time is byte-identical to a blank plate and no size threshold can tell them apart |
 | `check_bundle.mjs` | **the tree compiles.** One missing space in a leaf of `src/ritu/` killed nine renders in a row — every render bundles `src/index.js`, so a typo in one file takes out the whole pipeline, and all 19 other suites stayed green throughout because a file that cannot *parse* is not a function anybody can call. Bundles the graph with Remotion's own loaders, so it catches what a per-file parse cannot: `RituPiece.jsx` imported `FONT_FAMILY` from a module exporting `FONT_FAMILY_NAME`, and every file parsed fine |
 | `check_animation.mjs` | word/letter pools, **the shirorekha rule**, size-drift bounds |
 | `check_parse.mjs` | the `.lrc` + `.ends.txt` parse |
