@@ -6,9 +6,14 @@ import { LyricOverlay } from "./LyricOverlay.jsx";
 import { Styled } from "./Styled.jsx";
 import { WidthCalib } from "./WidthCalib.jsx";
 import { SAMPLE_W, SAMPLE_H } from "./width-model.mjs";
-import { LRC_TEXT, AUDIO_FILE, AUDIO_SECONDS } from "./lyrics.generated.js";
+import { LRC_TEXT, ENDS_TEXT, AUDIO_FILE, AUDIO_SECONDS } from "./lyrics.generated.js";
 
-const parsed = parseLrc(LRC_TEXT);
+// GOTCHA 31: the ends must be parsed WITH the lyrics, in one place. Passing
+// LRC_TEXT alone made the composition re-derive every end from the next line's
+// start while render.mjs's report claimed 109/109 were timed -- two parses, one
+// reported, one rendered. ENDS_TEXT is empty when the song has no companion, in
+// which case parseLrc falls back to the estimate exactly as before.
+const parsed = parseLrc(LRC_TEXT, ENDS_TEXT);
 const WIDTH = Number(process.env.LYRIC_WIDTH || 1920);
 const HEIGHT = Number(process.env.LYRIC_HEIGHT || 1080);
 
@@ -184,6 +189,12 @@ export const RemotionRoot = () => {
           titleCardOutro: true,
           mode: "mix",
           mixBlock: 8,
+          // --motion is OFF by default, deliberately. It is the one feature here
+          // whose absence is the safer default: motion displaces text, and a
+          // displacement is the shape of bug that has shipped twice (gotchas
+          // 13 and 17). Ask for it and you get it.
+          motion: "off",
+          motionBlock: 7,
           wordAnim: "karaoke",
           letterAnim: "pop",
           letterVar: 0.03,

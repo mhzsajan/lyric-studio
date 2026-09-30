@@ -95,8 +95,18 @@ const stale = (() => {
   return f(c.time) + " | " + f(nxt + 30) + " | " + c.text;
 })();
 const withStale = parseLrc(lrcText, stale);
-check(withStale.cues[0].endFrom === "estimated", "stale end rejected, guess used");
-check(withStale.cues[0].end === plain.cues[0].end, "and the guess is the old value");
+// The contract is a CLAMP, not a rejection: an end running past the next line
+// is the singer's tail, so it is trimmed to the next line's start and labelled
+// "timed-clamped" rather than thrown away. This test used to assert
+// "estimated", which is the behaviour that was deliberately replaced -- it
+// discarded a tapped timing for a 30 ms overshoot and silently cost 10 of
+// Allare's 109 cues their real end. So it now asserts the clamp, AND that the
+// stale value itself was not used raw, which is the part that actually matters.
+check(withStale.cues[0].endFrom === "timed-clamped",
+  "stale end clamped to the next line", withStale.cues[0].endFrom);
+check(withStale.cues[0].end === plain.cues[0].end, "and the clamped value is the old estimate");
+check(withStale.cues[0].end <= plain.cues[1].time, "the stale end was discarded, not used raw",
+  "end " + withStale.cues[0].end.toFixed(2) + " vs next line " + plain.cues[1].time.toFixed(2));
 
 console.log("\n=== the real Allare ends file ===");
 if (existsSync(ENDS)) {

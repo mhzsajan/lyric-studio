@@ -35,6 +35,10 @@ fresh clone, and gotcha 28 is the flag-default trap that already shipped twice.
 | `src/beats.js` | `anchorsForCue()` quantizes word starts to the grid **within `beatTol` of where the `.lrc` already put them**; `lastBeatBefore()` drives the styled pulse |
 | `scripts/font_gate.py` | the hard gate. Legacy → delegates to the font repo's `check_song.py`; `--font-file` → fontTools cmap coverage, and a legacy `.ttf` (0 Devanagari codepoints) is a hard fail |
 | `scripts/critique.py` | verifies the rendered FILE: streams, duration, text present at sampled cue midpoints, pure plate, no edge-clip |
+| `scripts/lingering.py` | the check critique.py was missing: samples **after** each cue's tapped end and proves the line has cleared. Found gotcha 31 |
+| `src/motion.js` | `--motion off\|calm\|vivid\|wild`: 21 per-line choreographies, seeded deck, travel clamped to the placement's real margin |
+| `scripts/check_motion.mjs` | determinism, no repeats, "no two cues identical", every motion finished inside its own end, no first-frame pop |
+| `scripts/check_ends_wire.mjs` | the ends file reaches the **composition**, not just the report (gotcha 31) |
 | `scripts/make_test_assets.py` | synthesizes a 32 s / exactly-120-BPM click track + a Nepali `.lrc` of the words legacy layouts cannot write |
 | `src/Styled.jsx` + `src/style-profile.js` + `styles/` | full-frame mode and the Look contract (`styles/house.md` is the prose) |
 | `scripts/check_beats.mjs`, `scripts/check_flag_defaults.mjs` | regression tests for the quantizer and the flag-default trap |
@@ -313,6 +317,52 @@ Re-measure any file (and A/B it against ours) with:
 ```bash
 python scripts/reference_survey.py <video>            # one file
 python scripts/reference_survey.py <reference> <ours> # A/B + suggested --size
+```
+
+## Motion (`--motion`)
+
+```bash
+--motion off      # the house style: no motion (default)
+--motion calm     # small pool, gentle
+--motion vivid    # most of the pool
+--motion wild     # the whole pool, used hard
+--motion-block 7  # cues before the deck reshuffles
+```
+
+Each line gets one choreography from a pool of 21 — springs with real
+overshoot, arcs, rotations, wipes, blur, glow, per-word stagger. A line arrives,
+does one thing, and is finished by the time it ends.
+
+**Not the `motion` package, deliberately.** Framer Motion animates from
+wall-clock time and mount/unmount lifecycle; Remotion renders arbitrary frame
+indices out of order and must reproduce frame 7,000 as frame 7,000 tomorrow. Ask
+Framer Motion for frame 7,000 first and it draws frame 0's pose, and
+`AnimatePresence` exit animations cannot fire in a renderer that jumps to frames.
+The vocabulary is rebuilt on the frame clock instead, which also keeps the
+"seeded, byte-identical re-render" rule the repo depends on.
+
+**No two neighbouring lines share a motion**, and no two cues are *identical*
+even when they share an id — every cue draws its own direction, distance,
+rotation, spring constants and glow from a seed. Both properties are asserted:
+"no adjacent repeats" is not the same claim as "never looks the same", and only
+the second one is what was asked for.
+
+**Two hard rules**, both enforced by `scripts/check_motion.mjs`:
+
+| Rule | Why |
+|---|---|
+| Durations are **fractions of the cue's own span**, then capped: `enter ≤ 0.55s`, `exit ≤ 0.30s`, `enter + exit ≤ 0.70 × span` | a line must be *finished* at its tapped end, not merely on screen — gotcha 31's contract, extended to animation |
+| Travel is **clamped to the placement's real margin**, computed per cue | a transform is as capable of pushing text off-frame as a bad anchor is — gotchas 13 and 17, re-derived |
+
+Roam is the placement that can genuinely run out of room (a 60vw block centred
+on a seeded anchor); when it does, travel collapses to ~0 and the motion
+degrades to scale/opacity/filter rather than clipping.
+
+Verify before shipping:
+
+```bash
+node scripts/check_motion.mjs
+py  scripts/lingering.py out/<song>.mp4 --lrc song.lrc --ends song.ends.txt
 ```
 
 ## Word-by-word animation
@@ -836,6 +886,186 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     which of them wins, the code is the behaviour and the comment is a
     promise nobody kept.** Resolve it in favour of the caller, and make the
     verification asymmetric enough that it notices.
+
+30. **A FEATURE THAT CAN BE WRONG MUST BE OFF BY DEFAULT, NOT ON** (gotcha 30,
+    found by running the pipeline on the first real song). Beat sync shipped
+    "on unless you pass `--no-beats`", and on Allare it was actively harmful:
+
+    ```
+    detected bpm          123.05   (true tempo: 120)
+    confidence, forced    120 -> 2.59    123 -> 2.64    60 -> 2.79
+    inter-beat sd         0.0696 s on a 0.4874 s mean  (14% jitter)
+    median cue-to-beat    0.143 s;  13/35 cues within 0.1 s
+    same, at the TRUE 120 median 0.159 s  -- no better
+    ```
+
+    Three separate things are wrong there, and the last one is the real reason
+    to distrust the whole feature on this song:
+
+    - **123.05 vs 120 is 2.5%, and that accumulates.** A beat grid that is
+      0.0124 s long accumulates to ~10 s of drift over a 7-minute song. The
+      last word would be snapped to a beat 10 seconds from where the beat is.
+    - **The confidence number does not discriminate.** Forced 120 and forced 60
+      score within 0.2 of each other, so a comb filter reporting 123 has not
+      demonstrated anything about 123.
+    - **Even at the true tempo the grid does not fit the lyrics** (0.159 s
+      median, worse than the wrong one). Allare's vocal is phrased against the
+      melody, not a metronome, so cue starts do not sit on the click. A perfect
+      beat grid still cannot be the authority on when a word is sung.
+
+    Which is why `beatTol` quantizes rather than retimes (see src/beats.js) and
+    why the `.lrc` stays the ground truth. But quantization bounds the damage
+    only if the grid is *trustworthy*, and nothing checked that. So now:
+
+    - `detect_beats.py` writes `"usable": false` below `--min-confidence`
+      (default 3.0; the synthetic click track scores 5.04, Allare 2.64) and
+      prints why, in the terms of the failure;
+    - `make_video.mjs` does not pass on a grid the detector marked unusable, so
+      the safe behaviour needs no flag;
+    - `--bpm <tempo>` is how you OVERRIDE it, for a song whose tempo you know.
+      Forcing 120 on Allare is one flag and produces a grid aligned to the song.
+
+    The lesson generalises past beats: every optional enhancement in this
+    pipeline that consumes a *measurement* of something outside the `.lrc` must
+    carry its own evidence threshold, because a plausible-looking wrong number
+    is the failure mode this repository has now paid for in four different
+    places (gotchas 20, 25, 28, 30).
+
+31. **THE ENDS FILE HAS TO REACH THE COMPOSITION, NOT JUST THE REPORT**
+    (gotcha 31, found because the user watched the video and said "some words
+    don't end even after their end timing ended").
+
+    This is the fifth time this repo has paid the same bill, and it is worth
+    stating as a rule: **a data channel that exists in the CLI and is consumed
+    by the report has not been delivered to the thing that is actually
+    rendered.** Only wiring it into the log is not wiring it in.
+
+    What happened. `render.mjs` read `Allare Remotion.ends.txt`, matched 109/109
+    cues and printed:
+
+    ```
+    ends : 109/109 timed from Allare Remotion.ends.txt (100%)  [10 clamped]
+    ```
+
+    That was all true. But `writeGenerated()` passed only `LRC_TEXT` into
+    `src/lyrics.generated.js`, and `Root.jsx` called `parseLrc(LRC_TEXT)` — no
+    ends. So **the composition re-derived every end from the next line's start**,
+    and every line stayed on screen until the *following* line arrived rather
+    than stopping when the singer stopped. Measured on the shipped file:
+
+    ```
+    11 of the first 12 cues still had ink 0.15 s past their own tapped end
+    cue 1   reported end 98.61 (timed)     vs rendered 99.05 (estimated)
+    ```
+
+    Two parses of the same file disagreed, and the one that was printed was not
+    the one that was rendered. Nothing compared them, so nothing errored, the
+    critique passed every check, and the file was 6.4 MB of correct video with
+    the timings quietly wrong throughout. Same shape as gotcha 25 (a calibration
+    that measured a font the render never loaded) and gotcha 14 (a length the
+    composition never saw).
+
+    Two lessons, and the second one is the one that actually generalises:
+
+    - **A report is not a delivery.** If a fact has to be in the video, the
+      channel into the video is the thing to assert. `scripts/check_ends_wire.mjs`
+      now checks all four links: render.mjs emits `ENDS_TEXT`; every
+      `writeGenerated()` call site passes it; `Root.jsx` parses with it (and no
+      bare `parseLrc(LRC_TEXT)` survives); and the module on disk parses to the
+      same ends as the source. It deliberately compares the *generated module*
+      against the *source files* — comparing a parse to the same parse proves
+      nothing, which is the mistake that made the first version of this test
+      pass while the bug was still live.
+    - **A check that cannot fail is not a check.** `critique.py` sampled cue
+      MIDPOINTS — "is there text when a line should be there" — and had no
+      equivalent for "is the text GONE when it should be gone". So the one
+      question the user was actually asking was never asked by anything.
+      `scripts/lingering.py` asks it, over every cue, and it found this bug in
+      about a minute. The gap was not the parser; it was that the test suite had
+      a shape that made the failure invisible.
+
+32. **A MEASUREMENT TOOL THAT REPORTS A DIFFERENT SAMPLE THAN IT MEASURED
+    INVENTS BUGS, AND THEN THE FIX STARTS WITH THE TOOL** (found while chasing
+    gotcha 31, and it cost more time than the bug did).
+
+    Fixing lingering text made `lingering.py` report 2 remaining offenders. Both
+    were false positives, and neither was the render's fault:
+
+    - **It sampled a time, but read a frame.** A video has no frame at an
+      arbitrary timestamp. At 15 fps the grid is 67 ms apart, so a request for
+      t=237.47 s is served with the frame at t=237.5333 s — which on Allare is
+      already the *next* line's first frame. The tool guarded the *requested*
+      time against the next line's start while being *handed* a later frame.
+    - **Worse, float rounding decided it.** A sample at t=219.2667 s landed on
+      a frame boundary, and the comparison went the wrong way by 3e-5, so a line
+      whose opacity was provably `0.0000` was reported as still lit.
+    - **The first version was also wrong twice more**: it counted the *next*
+      line's entrance as the previous line lingering (11 of 12 "offenders" on the
+      broken file included 2 that were never a problem at all), and it reported
+      a three-decimal `lit fraction` with no idea of what the number meant.
+
+    What fixed it was not a tolerance; it was making the measurement
+    unambiguous. Samples are specified as a **frame index**, converted to a seek
+    time half a frame inside it, and the next line's first **frame** is what
+    bounds the window. There is no boundary case left to round the wrong way.
+
+    The general rule, and this repo's fifth and sixth instances of it: **when a
+    check reports a bug, first prove the bug is in the product.** A measuring
+    instrument that is approximate, unspecified or boundary-riddled will
+    manufacture failures that are indistinguishable from real ones — and the
+    instinct to "fix" those is how a correct renderer gets broken. Concretely:
+    say what the number means, make the sample unambiguous, and confirm the
+    finding against an independent source (`scripts/_probe40.mjs`-style: print
+    the opacity the renderer computes for that exact frame) **before** changing
+    render code. Here the render was right three times in a row and the tool was
+    wrong twice.
+
+33. **A MOTION THAT CAN DISPLACE TEXT MUST BE OFF BY DEFAULT, AND EVERY
+    ANIMATION MUST FINISH INSIDE THE CUE'S OWN END** (gotcha 33, from the
+    `--motion` feature).
+
+    `--motion off|calm|vivid|wild` gives each line one of 21 choreographies
+    (springs with real overshoot, arcs, rotations, wipes, blur, glow, per-word
+    stagger) from a seeded deck, so no two neighbouring lines share a motion and
+    no two cues are *identical* even when they share an id — each cue gets its
+    own seeded direction, distance, rotation, spring constants and glow.
+
+    The design note worth keeping: **this is not the `motion` package
+    (Framer Motion), on purpose.** Framer Motion animates from wall-clock time
+    and mount/unmount lifecycle; Remotion renders arbitrary frame indices out
+    of order and must be able to re-render frame 7,000 as frame 7,000 tomorrow.
+    Ask Framer Motion for frame 7,000 first and it draws frame 0's pose, and
+    `AnimatePresence`'s exit animation can never fire in a renderer that jumps
+    to arbitrary frames. So the vocabulary is rebuilt on the frame clock, which
+    also preserves the "seeded, byte-identical re-render" rule the whole repo
+    depends on. See the header of `src/motion.js`.
+
+    Two rules fell out of building it, both enforced by
+    `scripts/check_motion.mjs`:
+
+    - **Durations are fractions of the cue's own span, then capped** —
+      `enter = min(0.55s, span*0.42)`, `exit = min(0.30s, span*0.28)`, so
+      `enter + exit <= 0.70 * span` always. A 0.28 s interjection and a 2.6 s
+      chorus line both animate fully inside their own time and neither can
+      outlive the word it belongs to. This is gotcha 31's contract extended to
+      animation: a line must be *finished* at its end, not merely on screen.
+    - **Travel is clamped to the placement's real margin**, computed per cue from
+      the geometry, not a taste constant. Roam is the placement that can
+      genuinely run out of room (a 60vw block centred on a seeded anchor), and
+      when it does the travel collapses to ~0 and the motion degrades to
+      scale/opacity/filter. This is gotchas 13 and 17 — both "text silently left
+      the frame" — re-derived for a new mechanism, because a transform is
+      exactly as capable of doing that as a bad anchor is.
+
+    The first build also had the same bug class as everything above it, which is
+    the seventh time and the reason this entry exists: a motion that set no
+    opacity of its own defaulted to **full opacity on its first frame**, so lines
+    popped in instead of fading in. `lingering.py` found it, by reporting the
+    *next* line's first frame as the previous line lingering. So every motion is
+    now wrapped in a multiplicative `fadeIn * fadeOut` envelope, and two checks
+    exist because one was not enough: a line's first frame must be invisible, and
+    opacity must not dip during its entrance (a spring's own overshoot is
+    allowed; a strobe is not).
 
 ## The shape of the roam audio bug, in one line
 

@@ -6,6 +6,7 @@ import { widthEm } from "./width-model.mjs";
 import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
+import { buildMotionPlan, cueMotion, motionParams, travelBudget, wordMotion, MOTION_LEVELS } from "./motion.js";
 import { TitleCard } from "./TitleCard.jsx";
 import { AUDIO_FILE, LEGACY_FONT_FILE, LEGACY_FONT_FAMILY, FONT_FILE, FONT_FAMILY_NAME } from "./lyrics.generated.js";
 
@@ -193,7 +194,7 @@ export function wordState(mode, start, end, t, st) {
  */
 function animatedWords(text, opts) {
   const { seed, index, anim, sizeMode, sizeVar, t, cueTime, cueEnd,
-          letterAnim, letterSizeVar, anchors } = opts;
+          letterAnim, letterSizeVar, anchors, motionLevel, motionId, motionPrm } = opts;
   // anchors come from src/beats.js when a beats.json was passed: word starts
   // quantize to the beat grid, ends stay distributed. undefined = the old
   // even distribution, unchanged.
@@ -217,6 +218,15 @@ function animatedWords(text, opts) {
       sizeMode === "word"
         ? (sizeFor(seed, index, amount, "w" + i) * 100).toFixed(2) + "%"
         : null;
+
+    // --motion: a per-WORD offset that decays as the word arrives, so the line
+    // is still assembling itself while its own entrance is finishing. COMPOSED
+    // with wordState's transform as a string rather than assigned over it: two
+    // writes to `transform` on one span is gotcha 12, and here both writers are
+    // wanted, so the second one has to be appended to the first, not replace it.
+    const wm = motionId ? wordMotion(motionId, t - w.start, motionPrm, motionLevel) : "";
+    const transform = ws.transform ? (wm ? wm + " " + ws.transform : ws.transform) : wm;
+
     return (
       <React.Fragment key={i}>
         {i > 0 ? " " : null}
@@ -227,6 +237,7 @@ function animatedWords(text, opts) {
             display: "inline-block",
             ...(pct ? { fontSize: pct } : {}),
             ...ws,
+            ...(transform ? { transform } : {}),
           }}
         >
           {letterNodes(w.text, {
@@ -377,7 +388,7 @@ export function cueStyle(style, p, q, j) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock }) => {
   const frame = useCurrentFrame();
   const { fps, width: W_FRAME, height: H_FRAME } = useVideoConfig();
   const t = frame / fps;
@@ -385,7 +396,12 @@ export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, 
   const anim = WORD_ANIMS.includes(wordAnim) ? wordAnim : "off";
   const lAnim = LETTER_ANIMS.includes(letterAnim) ? letterAnim : "off";
 
-  // Active cue = the last one that has started.
+  // Active cue = the last one that has STARTED. It does not need to test `end`:
+  // as t passes cue.end, `until = cue.end - t` goes negative, cueStyle()'s
+  // easeIn(clamp01(q)) falls to 0 and the line is invisible -- it fades out over
+  // EXIT and is gone EXACTLY at its end. That is the contract the ends file
+  // exists to enforce (gotcha 31); what broke it was the ends never reaching
+  // this component, not this selection.
   let idx = -1;
   for (let i = 0; i < cues.length; i++) {
     if (cues[i].time <= t) idx = i;
@@ -396,6 +412,12 @@ export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, 
   // cut. Its own presentation is resolved separately below, which is what turns
   // a change of placement into a cross-fade between two layouts instead of the
   // text jumping.
+  //
+  // Note that this is only reached when the previous line's own end has not
+  // been passed: prevLife is progress through prev's [time, end) span, so once
+  // prev.end <= t it clamps to 1 and prev is not drawn. With ends properly
+  // wired (gotcha 31), prev.end is always <= the next line's start, so the
+  // outgoing line is gone by the time the new one arrives.
   const prev = idx > 0 ? cues[idx - 1] : null;
   const prevAge = prev ? t - prev.time : 0;
   const prevSpan = prev ? prev.end - prev.time : 0;
@@ -476,6 +498,20 @@ const mixPlan =
   mode === "mix"
     ? buildMixPlan({ seed: master, cueCount: cues.length, block: Number(mixBlock) || 8, spec: mixPlanSpec || "" })
     : null;
+
+// -- the motion plan (--motion) ------------------------------------------------
+//
+// One motion per cue, from a seeded deck, so no two neighbouring lines share a
+// choreography and every motion in the pool is used. Empty when --motion is off
+// or absent, and then cueMotion() returns {} and the line falls through to the
+// original cueStyle path untouched -- the house style is unchanged by the mere
+// existence of this feature.
+const motionLevel = MOTION_LEVELS.includes(motion) ? motion : "off";
+const motionPlan =
+  motionLevel === "off"
+    ? []
+    : buildMotionPlan({ seed: master, cueCount: cues.length, level: motionLevel, block: Number(motionBlock) || 7 });
+const motionAt = (cueIndex) => (motionPlan.length ? motionPlan[cueIndex] : null);
 
 // A non-mix mode is a one-entry plan repeated, so there is exactly one code path
 // that knows what a cue should look like -- not two that have to agree.
@@ -627,11 +663,17 @@ function renderCue(cueObj, isPrev, life) {
   }
   if (isPrev) size *= g.prevScale;
 
+  // Resolved FIRST because the word layer needs the same motion id, and the
+  // word stagger must agree with the line's own choreography.
+  const motionId = motionAt(cueObj.index);
+  const motionPrm = motionId ? motionParams(master, cueObj.index, motionLevel) : null;
+
   const content = spans
     ? animatedWords(cueObj.text, {
         seed: master, index: cueObj.index, anim, sizeMode, sizeVar, t,
         cueTime: cueObj.time, cueEnd: cueObj.end, letterAnim, letterSizeVar: letterVar,
         anchors: anchorsForCue(cueObj, beats, Number(beatTol) || 0.4),
+        motionLevel, motionId, motionPrm,
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)
@@ -661,7 +703,63 @@ function renderCue(cueObj, isPrev, life) {
   // positioned box let glow's scale() overwrite the box's own translate(-50%,
   // -50%) and the block hung off the right edge of the frame; the same
   // overwrite took the band's top offset with it.
-  const inner = { ...cueStyle(pickedFor(cueObj.index), since / ENTER, until / EXIT, jitterFor(master, cueObj.index)), display: "inline-block" };
+  //
+  // --motion REPLACES cueStyle's transform rather than adding to it: both are
+  // line-level entrances, and two of them on one element fight (gotcha 12 is
+  // precisely two writes to `transform` on one box). The motion's own opacity
+  // envelope supersedes cueStyle's, and it is the one that has to be right --
+  // it is the thing that clears the line on its tapped end.
+  const motionIdLocal = motionId;
+  let inner = { ...cueStyle(pickedFor(cueObj.index), since / ENTER, until / EXIT, jitterFor(master, cueObj.index)), display: "inline-block" };
+
+  if (motionIdLocal) {
+    // HOW FAR THIS CUE MAY MOVE. Derived from the placement's real margin, not
+    // from a taste constant, because a transform is exactly as capable of
+    // pushing text off the frame as a bad anchor is (gotchas 13 and 17). Roam is
+    // the placement that can genuinely run out of room, and when it does the
+    // travel collapses to 0 and the motion falls back to scale/opacity/filter.
+    const emW = widthEm(cueObj.text, widthTable) * WRAP_MARGIN;
+    const bandPx = (g.kind === "roam" ? 60 : g.width) * (W_FRAME / 100);
+    const blockW = Math.min(emW * shown, bandPx);
+    const lines = Math.max(1, Math.ceil(blockW / bandPx));
+    const blockH = lines * shown * 1.32;
+    const travel = travelBudget({
+      kind: g.kind,
+      left: g.left,
+      width: g.width,
+      anchor: positionFor(master, cueObj.index),
+      halfBlockW: blockW / 2,
+      halfBlockH: blockH / 2,
+      W: W_FRAME,
+      H: H_FRAME,
+    });
+
+    const prm = motionPrm;
+    const m = cueMotion({
+      level: motionLevel,
+      motionId,
+      params: prm,
+      // Per-cue, not the component's `since`/`until`: those belong to the
+      // CURRENT line, and a line must be animated by its own clock.
+      since: t - cueObj.time,
+      until: cueObj.end - t,
+      span: Math.max(0.01, cueObj.end - cueObj.time),
+      travel,
+      holdSeed: (cueObj.index % 7) / 7,
+    });
+
+    inner = {
+      display: "inline-block",
+      transform: m.transform || "",
+      filter: m.filter || "",
+      clipPath: m.clipPath || undefined,
+      opacity: typeof m.opacity === "number" ? Math.max(0, Math.min(1, m.opacity)) : 1,
+      // Motion's glow is ADDED to the line's own shadow, never substituted for
+      // it: dropping the shadow would remove the dark halo that keeps white
+      // text readable over a bright camera feed.
+      textShadow: m.textShadow ? `${shadow ? shadow + ", " : ""}${m.textShadow}` : undefined,
+    };
+  }
 
   const box =
     g.kind === "roam"
