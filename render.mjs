@@ -1910,6 +1910,29 @@ async function run(audioPath, lrcPath) {
   );
   if (widthInfo.table) {
     props.widthModel = widthInfo.table;
+    // The room between the glyph ink and the word box's lower edge, in em.
+    //
+    // This is what the `--cut word` tear bar has to fit inside, and it is a FONT
+    // property: measured across the eleven faces in this batch it runs from
+    // 0.006em to 0.474em. A constant bar height therefore drew a bright white
+    // edge across the bottom of every letter in ten of the eleven -- and since
+    // the bar sits BEHIND the text and the word animates its own opacity, the
+    // line is seen through a translucent glyph exactly while it is being read.
+    // In Devanagari a broken consonant is a different consonant.
+    //
+    // Measured by scripts/metrics_probe.py --write, cached beside the width table
+    // because it is the same kind of fact about the same key.
+    const room = Number(widthInfo.table.cutRoom);
+    props.cutRoom = Number.isFinite(room) && room > 0 ? room : null;
+    if (props.cutRoom == null) {
+      console.warn(
+        "  note: no measured ink room for this font (" +
+          (legacy ? legacy.family : flag("--font")) + ")\n" +
+          "        The --cut tear bar falls back to a very thin edge, because a bar\n" +
+          "        drawn through the glyph bottoms is a wrong word and a thin one is\n" +
+          "        only a lost effect.  py scripts\\metrics_probe.py --write"
+      );
+    }
     // A legacy font uses the per-code-point model, a Unicode font the
     // per-class one. Printing the per-class names for a per-char table showed
     // a row of dashes and looked like the font had no coefficients at all.

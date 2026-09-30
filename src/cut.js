@@ -126,10 +126,57 @@ export function wordCut(level, seed, cueIndex, wordIndex, fontSize = 105) {
  * 1 the steps are as tall as a fifth of the word. The top edge is left flat so
  * the shape never reaches the glyphs' bodies.
  */
-export function tearBar(level, seed, cueIndex, wordIndex, fontSize = 105) {
+export function tearBar(level, seed, cueIndex, wordIndex, fontSize = 105, room = null) {
   const L = LEVELS[level];
   if (!L || L.tear <= 0) return null;
-  const h = Math.max(1, fontSize * 0.075);
+
+  // THE BAR'S HEIGHT IS A FONT PROPERTY, NOT A CONSTANT.
+  //
+  // The bar is drawn at `bottom: 0` of the word span's box, so it occupies the
+  // space between the glyph INK and the box's lower edge -- and that space is
+  // `descent - inkBottom` for whatever face is in use. Measured across the eleven
+  // fonts in this batch it runs from 0.006em (Himalayabold) to 0.474em (MKali):
+  //
+  //     ARAP007   room 0.010em    a fixed 0.34em bar overlaps 34x
+  //     PawanG     room 0.037em                          9x
+  //     Rajdhani   room 0.086em                          4x
+  //     MKali      room 0.474em                          clear
+  //
+  // So a constant height put a bright `rgba(255,255,255,0.85)` edge ACROSS the
+  // bottom of every letter in ten of the eleven fonts. And it looks worse than a
+  // static overlap, because the bar sits behind the text and the word's own
+  // opacity is below 1 while it animates -- so the line is seen THROUGH a
+  // translucent glyph, at exactly the moment the eye is reading the word. A
+  // letter with a bright rule through it stops being that letter, and in
+  // Devanagari a broken consonant is a different consonant. That is the reported
+  // "it breaks the meaning of the letter".
+  //
+  // `room` is measured per font by scripts/metrics_probe.py --write and arrives in
+  // props as `cutRoom`.
+  //
+  // Three bugs in the first version of this, all caught by check_cut.mjs section
+  // 5 before a frame was rendered, and all worth recording because each one
+  // silently restored the original fault:
+  //
+  //   1. `Math.max(1, fontSize * em)` floored the height at ONE PIXEL, which for
+  //      a font with 0.006em of room is 0.0095em -- 58% more than the room. The
+  //      floor was there to keep the bar visible; it was also the thing that put
+  //      it back across the ink.
+  //   2. The unmeasured fallback was 0.010em, which is MORE than Himalayabold's
+  //      0.006em room. A fallback chosen by rounding rather than by the worst
+  //      measured case is not a fallback.
+  //   3. `room` was trusted, so a nonsense 1e9 gave min(0.34, 8e8) = the old
+  //      constant and the exact original bug back.
+  //
+  // So: clamp the measurement into the range that is physically meaningful, take
+  // 80% of what is left as the headroom, and floor in FRACTIONAL pixels only.
+  const BAR_EM = 0.34;
+  const SAFE_EM = 0.004;          // below the tightest room measured (0.006em)
+  const ROOM_MAX = 1.0;           // no font has a whole em of descender room
+  const r = Number(room);
+  const usable = Number.isFinite(r) && r > 0 ? Math.min(ROOM_MAX, r) : SAFE_EM;
+  const em = Math.min(BAR_EM, Math.max(SAFE_EM, usable * 0.8));
+  const h = Math.max(0.4, fontSize * em);
   const steps = 7;
   const depth = L.tear;
   const salt = `${seed}:C${cueIndex}:w${wordIndex}:tear`;

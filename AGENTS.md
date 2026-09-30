@@ -231,10 +231,10 @@ node scripts\check_all.mjs      # every self-contained suite. This is the comman
 node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 ```
 
-There are **25** check scripts, in three kinds. Only the first kind must be
+There are **26** check scripts, in three kinds. Only the first kind must be
 green before you commit, and `check_all.mjs` runs all of it:
 
-**1. Self-contained suites (20)** — pure functions of the source; no render, no
+**1. Self-contained suites (21)** — pure functions of the source; no render, no
 font, no audio. Seconds each, and every one has caught a real bug here.
 
 | | guards |
@@ -248,6 +248,7 @@ font, no audio. Seconds each, and every one has caught a real bug here.
 | `check_typing.mjs` | the typed-on reveal: **the delay chain finishes inside every cue's span**, including the pathological ones (a 40-letter line in 0.5 s). A typing reveal is nothing but letters arriving late, which is the exact shape of the lingering-lyric bug. Also walks the **real** word layer rather than a copied model of it |
 | `check_wrap.mjs` | a long lyric line becomes **rows at full size**, not one shrunken row: balanced rather than greedy, and **never split inside a word** — Devanagari's shirorekha is continuous across a word, so a break inside one snaps the headline (gotcha 8). Runs a deliberately greedy and a deliberately word-splitting breaker and requires the assertions to reject both |
 | `check_camera.mjs` | the ṚITU piece's fall is **monotonic across all 7530 frames**. It is invisible in any single frame and load-bearing across four minutes: the frame where the scale decreases is the frame where the camera has arrived, which is the one thing the song refuses. Also that the instrumental breaks fall *faster* than the sung stanzas, and that the beat grid moves the **camera only** |
+| `check_typo.mjs` | the five advanced-typography techniques (`src/typo/`): **finite** across 825 calls including `q = NaN` — a NaN transform does not draw the character, which is the disappearing-word bug through a new door; **deterministic**; **inside a declared travel contract** the code is actually held to; **readable through the body of a cue** (a technique that fades a glyph past 0.25 is deleting a letter); and **no technique owns timing** — asserted by reading the signatures, because a technique that could delay a character pushes ink past the cue's end |
 | `check_bundle.mjs` | **the tree compiles.** One missing space in a leaf of `src/ritu/` killed nine renders in a row — every render bundles `src/index.js`, so a typo in one file takes out the whole pipeline, and all 19 other suites stayed green throughout because a file that cannot *parse* is not a function anybody can call. Bundles the graph with Remotion's own loaders, so it catches what a per-file parse cannot: `RituPiece.jsx` imported `FONT_FAMILY` from a module exporting `FONT_FAMILY_NAME`, and every file parsed fine |
 | `check_animation.mjs` | word/letter pools, **the shirorekha rule**, size-drift bounds |
 | `check_parse.mjs` | the `.lrc` + `.ends.txt` parse |

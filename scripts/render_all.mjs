@@ -1,4 +1,4 @@
-﻿// render_all.mjs -- the seven songs, two videos each, every one gated.
+// render_all.mjs -- the seven songs, two videos each, every one gated.
 //
 //   node scripts\render_all.mjs --dry      # print the plan and exit
 //   node scripts\render_all.mjs            # render whatever is missing
@@ -136,38 +136,59 @@ const SLOW = [
   "--type", "letter",
 ];
 
-// [folder, song, audio, lrc, ends, seconds, treatment, fontV1, fontV2]
+// [folder, song, seconds, treatment, fontV1, fontV2]
 // `seconds` is PROBED by scripts/plan.mjs, never typed from memory.
 //
-// THE FONT PLAN, AND WHY THREE SONGS ARE UNICODE-ONLY
-// All ten confirmed fonts are used and no song's own pair matches, but the pairs
-// are NOT free: a PREETI font cannot carry a line the Preeti layout has no key
-// for, and three songs contain pre-base i-matra words it cannot express.
+// NO FILENAME APPEARS IN THIS TABLE, AND THAT IS THE POINT. Three of the seven
+// songs are named in Devanagari, and this file used to spell those names out as
+// literals. A PowerShell `Get-Content -Raw` | `Set-Content` round-trip -- run for
+// tidiness while editing an unrelated line -- re-encoded them as Latin-1, and the
+// batch died with ENOENT on exactly the three Nepali songs while rendering the
+// other four without complaint. Silent on four, fatal on three: the worst ratio
+// available, and it came from a command that was not trying to touch them.
 //
-//   Allare, Ritu, Wora Para   contain them  -> UNICODE only, 4 fonts to 6 videos
-//   Jam Na Maya               2 of 7 safe   -> ARAP007, Shreenath
-//   Kali Kali, Ow Amira,      all 7 safe    -> any Preeti font
-//   Timilai
-//
-// That is why the three Unicode-only songs repeat. It is not the font count that
-// forces it -- there are ten, not four -- it is the LYRICS. `preeti_safety.py` in
-// the font repo measured it and the gate re-proves it at render time.
+// So the names are DISCOVERED, at run time, from the folder. There is no
+// non-ASCII left in this file to corrupt, and a re-tapped or renamed song cannot
+// break the batch. scripts/gate_case.mjs and silent_cues.mjs do the same thing for
+// the same reason.
 const JOBS = [
-  ["01 Allare BPM 120", "Allare", "Allare.mp3",
-    "à¤…à¤²à¥à¤²à¤¾à¤°à¥‡.remotion_start.lrc", "à¤…à¤²à¥à¤²à¤¾à¤°à¥‡.remotion_end.lrc", 417.1, FAST, "rajdhani", "kalam"],
-  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", "Jaam na Maya.mp3",
-    "Jaam na Maya.remotion_start.lrc", "Jaam na Maya.remotion_end.lrc", 295.4, FAST, "arap007", "shreenath"],
-  ["03 Kali Kali BPM 120", "Kali Kali", "Kali Kali.mp3",
-    "Kali Kali.remotion_start.lrc", "Kali Kali.remotion_end.lrc", 409.1, FAST, "pawang", "mkali"],
-  ["04 Ow Amira BPM 122", "Ow Amira", "Ow Amira.mp3",
-    "Ow Amira.remotion_start.lrc", "Ow Amira.remotion_end.lrc", 664.5, FAST, "cvhaha", "himalaya"],
-  ["05 Ritu BPM 105", "Ritu", "Ritu.mp3",
-    "à¤‹à¤¤à¥.remotion_start.lrc", "à¤‹à¤¤à¥.remotion_end.lrc", 293.4, SLOW, "arya", "yantramanav"],
-  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", "Timilai Bhuleko.mp3",
-    "à¤¤à¤¿à¤®à¥€à¤²à¤¾à¤ˆ à¤­à¥à¤²à¥‡à¤•à¥‹.remotion_start.lrc", "à¤¤à¤¿à¤®à¥€à¤²à¤¾à¤ˆ à¤­à¥à¤²à¥‡à¤•à¥‹.remotion_end.lrc", 323.3, SLOW, "katmandu", "pawang"],
-  ["07 Wora Para BPM 115", "Wora Para", "Wora Para.mp3",
-    "Wora Para.remotion_start.lrc", "Wora Para.remotion_end.lrc", 261.5, FAST, "rajdhani", "kalam"],
+  ["01 Allare BPM 120", "Allare", 417.1, FAST, "rajdhani", "kalam"],
+  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", 295.4, FAST, "arap007", "shreenath"],
+  ["03 Kali Kali BPM 120", "Kali Kali", 409.1, FAST, "pawang", "mkali"],
+  ["04 Ow Amira BPM 122", "Ow Amira", 664.5, FAST, "cvhaha", "himalaya"],
+  ["05 Ritu BPM 105", "Ritu", 293.4, SLOW, "arya", "yantramanav"],
+  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", 323.3, SLOW, "katmandu", "pawang"],
+  ["07 Wora Para BPM 115", "Wora Para", 261.5, FAST, "rajdhani", "kalam"],
 ];
+
+/**
+ * A song's real filenames, discovered from its folder.
+ *
+ * Every entry is required to exist and to be unambiguous. A missing file is an
+ * error that says WHICH file and WHICH folder, because the alternative -- letting
+ * render.mjs fail on a mangled path -- says neither and looks like a corrupt
+ * install.
+ */
+function filesFor(folder) {
+  const dir = path.join(SONGS_DIR, folder);
+  if (!fs.existsSync(dir)) {
+    throw new Error("song folder not found: " + dir);
+  }
+  const all = fs.readdirSync(dir);
+  const pick = (re, what) => {
+    const hits = all.filter((f) => re.test(f));
+    if (hits.length === 0) throw new Error("no " + what + " in " + dir);
+    if (hits.length > 1) {
+      throw new Error("more than one " + what + " in " + dir + ": " + hits.join(", "));
+    }
+    return hits[0];
+  };
+  return {
+    audio: pick(/\.(mp3|wav|m4a)$/i, "audio file"),
+    lrc: pick(/remotion_start\.lrc$/i, ".remotion_start.lrc"),
+    ends: pick(/remotion_end\.lrc$/i, ".remotion_end.lrc"),
+  };
+}
 
 const dry = process.argv.includes("--dry");
 const force = process.argv.includes("--force");
@@ -206,13 +227,13 @@ if (process.argv.includes("--one-per-song")) {
   for (const [folder, song, font] of SEVEN) {
     const job = JOBS.find((j) => j[0] === folder);
     if (!job) { console.error("  SEVEN names a folder not in JOBS: " + folder); process.exit(2); }
-    work.push({ folder, song, audio: job[2], lrc: job[3], ends: job[4],
-                secs: job[5], treatment: job[6], font, v: 1 });
+    work.push({ folder, song, ...filesFor(folder), secs: job[2], treatment: job[3], font, v: 1 });
   }
 } else {
-  for (const [folder, song, audio, lrc, ends, secs, treatment, f1, f2] of JOBS) {
-    work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f1, v: 1 });
-    work.push({ folder, song, audio, lrc, ends, secs, treatment, font: f2, v: 2 });
+  for (const [folder, song, secs, treatment, f1, f2] of JOBS) {
+    const f = filesFor(folder);
+    work.push({ folder, song, ...f, secs, treatment, font: f1, v: 1 });
+    work.push({ folder, song, ...f, secs, treatment, font: f2, v: 2 });
   }
 }
 

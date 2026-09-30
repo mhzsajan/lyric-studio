@@ -516,7 +516,13 @@ function animatedWords(text, opts) {
     const cutOn = CUT_LEVELS.includes(cut) && cut !== "off";
     const wcCut = cutOn ? wordCut(cut, seed, index, i, fontSizeOf(pct, baseSize)) : null;
     const cutT = wcCut ? wordCutTransform(wcCut) : "";
-    const tear = cutOn ? tearBar(cut, seed, index, i, fontSizeOf(pct, baseSize)) : null;
+    // `cutRoom` is the measured gap between the glyph ink and the word box's lower
+  // edge, in em, for THIS font. The tear bar is sized from it -- see tearBar().
+  // Ten of the eleven faces in this batch have less room than the old fixed bar
+  // was tall, which drew a bright edge through the bottom of every letter.
+  const tear = cutOn
+    ? tearBar(cut, seed, index, i, fontSizeOf(pct, baseSize), cutRoom)
+    : null;
 
     // The gap BETWEEN words carries the tracking. Letter spacing inside a word
     // would separate one syllable's letters and snap the shirorekha, so it is
@@ -925,7 +931,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill, wrap, xPos }) => {
+export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill, wrap, xPos, cutRoom }) => {
   // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
   // render.mjs produced; null when there is none, and pulseGlow falls back to a
   // slow breath rather than to nothing.
