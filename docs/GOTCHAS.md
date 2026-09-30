@@ -703,18 +703,20 @@ chooses a font.
     2026-09-30; local clone `C:/Users/o0o/tools/lyric-video-generator`
     remains as a git fossil but is no longer the reference. Cite the
     archive, not the clone.
-37. **RECOMMEND FONTS ONLY FROM `docs/FONTS-VERIFIED.md` — the song-tested,
+38. **RECOMMEND FONTS ONLY FROM `docs/FONTS-VERIFIED.md` — the song-tested,
     human-verified list.** Gates cannot certify a font: all 29 AMS layouts
     lack candrabindu+virama (gate-rejected in seconds on Allare), 5 fonts
     that *declare* PREETI print raw ASCII with exit 0 (0012-arap, 0017-arap,
     ananda-fanko-2, arap-010, ganga-1 — caught by pixel test, not by any
     gate), and 2 genuine PREETI fonts (deepankar, abhinav) spell individual
     words wrong at the glyph level while every automated check stays green.
-    11 of the 42 preferred fonts survived a full render + human eye-check of
-    the same song (2026-09-30): arap007, cv-haha, himalayabold, katmandu,
-    mkali, pawang, shreenath-bold (PREETI, `--legacy-font`); arya, kalam,
-    rajdhani (UNICODE, `--font-file`); plus yantramanav (the Unicode
-    default). The font repo's `docs/RENDER-TESTED.md` mirrors this list.
+    7 of the 42 handpicked preferred fonts survived a full render + human
+    eye-check of the same song (2026-09-30): arap007, cv-haha, mkali,
+    pawang (PREETI, `--legacy-font`); arya, kalam, rajdhani (UNICODE,
+    `--font-file`). Four more working legacy fonts are NOT on the handpicked
+    list — ananda-lipi-bold-bt, himalayabold, shreenath-bold, katmandu (the
+    original five minus abhinav) — nor is yantramanav (the Unicode default).
+    The font repo's `docs/RENDER-TESTED.md` mirrors this list.
 
 37. **A FALLBACK THAT PRODUCES A PLAUSIBLE WRONG DELIVERABLE IS A FAILURE,
     NOT A DEFAULT** (gotcha 37 — the other half of gotcha 19, and the
