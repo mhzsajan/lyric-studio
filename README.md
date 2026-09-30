@@ -120,7 +120,7 @@ All the inherited verification scripts came along: `check_output.py`,
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | measurements of the target video |
 | [`docs/GPU.md`](docs/GPU.md) | why the GPU is idle, measured |
 | [`docs/FONTS.md`](docs/FONTS.md) | render-time font notes (authority: the font repo) |
-| [`docs/FONTS-VERIFIED.md`](docs/FONTS-VERIFIED.md) | **the song-tested font list — recommend only from here** (11 proven fonts; 34 proven failures) |
+| [`docs/FONTS-VERIFIED.md`](docs/FONTS-VERIFIED.md) | **the song-tested font list — recommend only from here** (12 proven fonts; 36 proven failures; the 42-font handpicked list is 7/35) |
 | [font repo README](https://github.com/mhzsajan/nepali-legacy-fonts) | the 214-font catalogue, tiers, layouts, `check_song.py` |
 
 ## Requirements

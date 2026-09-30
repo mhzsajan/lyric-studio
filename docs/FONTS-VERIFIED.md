@@ -91,7 +91,8 @@ that property.
 
 All 42 preferred fonts were rendered or gate-checked on Allare (2026-09-30).
 **7 of the 42 passed** (arap007, cv-haha, mkali, pawang, arya, kalam,
-rajdhani) and **35 failed**:
+rajdhani) and **35 of the 42 failed** — plus `abhinav`, which failed the
+same song outside that list, for 36 failures in all:
 
 - **29 AMS/GENERATED fonts** — gate-rejected in seconds: their layouts have
   no candrabindu `ँ` or virama `्` slots and the song needs both
@@ -120,10 +121,10 @@ example of a verified legacy font: its class, round-trip and cmap all pass,
 and that was never sufficient (gotchas 35 and 38).
 
 **Coverage of the catalogue:** the 42-font list these came from is the
-**user's own handpicked list** (see the font repo's README "Preferred
-fonts"), and all 42 now carry a verdict. Beyond it, 166 of the font repo's
-214 fonts are untested — of which only the **62 PREETI-class** ones are
-worth a song render (GENERATED layouts cannot write real songs; UNICODE
+**user's own handpicked list** (the font repo's README marks it 🎯), and all
+42 now carry a verdict: **7 working, 35 not**. Beyond it, 166 of the font
+repo's 214 fonts are untested — of which only the **62 PREETI-class** ones
+are worth a song render (GENERATED layouts cannot write real songs; UNICODE
 cannot fail the legacy way). The full working/not-working/to-be-tested
 tables live in the font repo's `docs/RENDER-TESTED.md`.
 
