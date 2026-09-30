@@ -219,8 +219,10 @@ if (SKIP_CRITIQUE) {
   } else {
     console.warn(
       "  note: no ends companion found for " + lrcBase + ".\n" +
+      "        the render will STOP here unless you pass --allow-missing-ends\n" +
+      "        (every line is then estimated from the next line's start, and\n" +
       "        critique will sample between lines and may report false\n" +
-      "        'no lit text'. Looking for:\n" +
+      "        'no lit text'). Looking for:\n" +
       endsCandidates.map((p) => "          " + p).join("\n")
     );
   }

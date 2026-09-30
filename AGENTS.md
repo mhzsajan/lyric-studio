@@ -618,8 +618,10 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     retry.
 19. **The ends file is found by NAME, so renaming one half of the pair is
     silent** (gotcha 19). `Song.remotion_start.lrc` looks for
-    `Song.remotion_end.lrc`; a miss falls back to estimating every end and
-    **exits 0** with a video whose lyrics linger for a median of 22s. This is
+    `Song.remotion_end.lrc`; a miss falls back to estimating every end, and
+    a video whose lyrics linger for a median of 22s comes out of it. That
+    used to **exit 0** while it happened; it now stops — gotcha 37 for why
+    naming the path was not enough. This is
     not hypothetical: the first version of the lookup appended the end suffix
     without stripping the start infix, producing
     `Song.remotion_start.remotion_end.lrc`, missing the file that Song Timer
@@ -629,9 +631,10 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     `pairBase = base.replace(/[._-](?:remotion_)?start$/i, "")` — and require a
     separator before `start`, or a song called `Restart` becomes
     `Re.remotion_end.lrc`. And when a `.lrc` that is clearly half a pair has no
-    partner, **name the path that was looked for**: "none found" alone is
+    partner, **name the path that was looked for** — "none found" alone is
     indistinguishable from never having tapped ends, and the two need
-    different fixes.
+    different fixes — **and stop**. The naming is the diagnosis; the exit code
+    is the gate (gotcha 37).
 
     `node scripts/check_pairing.mjs` asserts the whole matrix (new name, old
     name, mixed, `Restart`, missing partner, `--ends`) and fails if the pairing
@@ -1131,6 +1134,61 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     2026-09-30; local clone `C:/Users/o0o/tools/lyric-video-generator`
     remains as a git fossil but is no longer the reference. Cite the
     archive, not the clone.
+
+37. **A FALLBACK THAT PRODUCES A PLAUSIBLE WRONG DELIVERABLE IS A FAILURE,
+    NOT A DEFAULT** (gotcha 37 — the other half of gotcha 19, and the
+    seventh time this repo has paid the same bill).
+
+    Gotcha 19 was "fixed" once. The lookup was corrected, and then the report
+    was taught to name the exact paths it had looked for:
+
+    ```
+    ends       : none found, estimating from the next line
+                 looked for Song.remotion_end.lrc and Song.ends.txt beside the .lrc
+    ```
+
+    That is a good message, and it changed nothing. The render still exited
+    **0** and still produced a video. An estimated end is the NEXT line's
+    start, so a line sung before an instrumental sits on screen for a median
+    of 22 s on Allare — a wrong file that looks right, at full length, with
+    the only evidence in a line that prints once between the cue list and a
+    four-minute encode and then scrolls away. No script could see it either,
+    because the exit code said everything was fine.
+
+    So the report was never the gate. It was the diagnosis, arriving after the
+    decision. A missing ends file now **stops** the render:
+
+    ```
+      ends       : NONE -- every line would be ESTIMATED from the next
+                   line's start instead of using your tapped ends.
+                   looked for Song.remotion_end.lrc and Song.ends.txt beside the .lrc
+
+      Re-export both halves from Song Timer, point --ends at the
+      file, or pass --allow-missing-ends to render with the
+      estimates anyway.
+    ```
+
+    `process.exitCode = 1` is the part that matters, because it is the part a
+    script can act on and the part `make_video.mjs` inherits. Two smaller
+    fixes came with it. `--ends` pointing at a path that does not exist is
+    reported as *that* — a typo in a long path is invisible in a message that
+    only lists what it looked for beside the `.lrc` — and a file that is there
+    but unreadable says so instead of being lumped in with "not found".
+
+    **`--allow-missing-ends` is the opt-out, so proceeding is always one flag
+    away and never the default.** Three tools pass it deliberately:
+    `calibrate_width.mjs`, `contact_sheet.mjs` and `gpu_probe.py` all hand
+    `render.mjs` a `.lrc` as a vehicle for *words*, not for timing. A gate
+    that cannot tell the difference between "this render's timing is the
+    deliverable" and "this `.lrc` is carrying lyrics into a width
+    measurement" is a gate that gets disabled everywhere — which is exactly
+    how gotcha 30's beat sync ended up announcing itself in the log while
+    doing nothing.
+
+    The general rule, stated once: **every "it is fine to continue without X"
+    branch in this pipeline is a decision the operator makes out loud.** A
+    default that yields a plausible artifact is worse than an error, because
+    the error would have been found.
 
 ## The shape of the roam audio bug, in one line
 

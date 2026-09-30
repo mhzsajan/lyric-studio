@@ -82,6 +82,10 @@ def main():
         "--mode", "center",
         "--word-anim", "off",
         "--letter-anim", "off",
+        # This probe measures GPU throughput. The .lrc is carrying words, not
+        # timing, and render.mjs stops when a song has no ends file
+        # (gotcha 19/37) -- correct for a render, noise here.
+        "--allow-missing-ends",
     ]
     if a.font_file:
         common += ["--font-file", a.font_file]

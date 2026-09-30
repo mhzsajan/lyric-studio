@@ -78,18 +78,31 @@ const dir = mkdtempSync(path.join(tmpdir(), "pairing-"));
 const audio = path.join(dir, "Fixture.wav");
 silentWav(6, audio);
 
-function report(lrcPath) {
+function reportExit(lrcPath, extra) {
+  const args = [RENDER, audio, lrcPath, "--report-only"];
+  for (const a of extra || []) args.push(a);
   try {
-    return execFileSync(process.execPath, [RENDER, audio, lrcPath, "--report-only"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    return {
+      out: execFileSync(process.execPath, args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+      code: 0,
+    };
   } catch (err) {
-    // render.mjs exits non-zero when most ends cannot be applied, which is a
-    // legitimate outcome for the "missing file" cases below. The output is
-    // still the thing being asserted.
-    return (err.stdout || "") + (err.stderr || "");
+    // render.mjs exits non-zero when the ends cannot be applied, which is a
+    // legitimate outcome for several of the cases below. The output is still
+    // the thing being asserted, and so is the exit code -- a render that
+    // quietly proceeds on estimated ends is the bug this file exists for.
+    return {
+      out: (err.stdout || "") + (err.stderr || ""),
+      code: typeof err.status === "number" ? err.status : 1,
+    };
   }
+}
+
+function report(lrcPath) {
+  return reportExit(lrcPath).out;
 }
 
 const timedLine = (out) => out.match(/ends\s+:\s+(\d+)\/(\d+) timed from (\S+)/);
@@ -165,10 +178,14 @@ try {
 
   // 5. Half a pair: the .lrc says it wants an ends file and there is none.
   //    This must be NAMED, because "none found" is indistinguishable from never
-  //    having tapped ends, and the two need different fixes.
+  //    having tapped ends, and the two need different fixes -- and it must
+  //    also STOP. Naming it was not enough: the message printed between the cue
+  //    list and the render, scrolled past, and the exit code stayed 0, so a
+  //    script could not see it either (gotcha 37).
   mkdirSync(path.join(dir, "half"));
   writeFileSync(path.join(dir, "half", "Song.remotion_start.lrc"), LRC);
-  const halfOut = report(path.join(dir, "half", "Song.remotion_start.lrc"));
+  const half = reportExit(path.join(dir, "half", "Song.remotion_start.lrc"));
+  const halfOut = half.out;
   if (usedEnds(halfOut) === null) {
     pass("a missing ends file is reported, not silently estimated");
   } else {
@@ -180,6 +197,14 @@ try {
     fail(
       "a missing ends file is not named by path, so a half-renamed folder " +
         "gives no way to find the mismatch"
+    );
+  }
+  if (half.code !== 0) {
+    pass("a render with no ends file exits non-zero instead of estimating");
+  } else {
+    fail(
+      "a render with no ends file still exits 0 -- every line is then estimated " +
+        "from the next line's start, which is the lingering-lyric bug (gotcha 19/37)"
     );
   }
 
@@ -200,6 +225,44 @@ try {
     pass("--ends overrides both naming conventions");
   } else {
     fail("--ends did not override the looked-up names");
+  }
+
+  // 7. The opt-out. A stop is only defensible if the way to proceed is one
+  //    flag away and says what proceeding costs: an estimate is the next
+  //    line's start, not the tapped end.
+  const allowed = reportExit(
+    path.join(dir, "half", "Song.remotion_start.lrc"),
+    ["--allow-missing-ends"]
+  );
+  if (allowed.code === 0) {
+    pass("--allow-missing-ends renders a song with no ends file");
+  } else {
+    fail(
+      "--allow-missing-ends did not let the render proceed (exit " + allowed.code +
+        ") -- a hard stop with no way past it is a dead end, not a gate"
+    );
+  }
+  if (/estimating from the next line/.test(allowed.out)) {
+    pass("the opt-out states that the ends are being estimated");
+  } else {
+    fail("the opt-out renders without saying the ends are estimates");
+  }
+
+  // 8. --ends pointing at a file that is not there is a different mistake from
+  //    "Song Timer never wrote one", and it needs the path echoed back: a typo
+  //    in a long path is invisible in a message that only lists what it looked
+  //    for beside the .lrc.
+  const typo = reportExit(
+    path.join(dir, "half", "Song.remotion_start.lrc"),
+    ["--ends", path.join(dir, "half", "Ends.tx")]
+  );
+  if (typo.code !== 0 && /Ends\.tx/.test(typo.out)) {
+    pass("a --ends path that does not exist stops the render and is echoed");
+  } else {
+    fail(
+      "a --ends path that does not exist is not reported as such (exit " +
+        typo.code + ")"
+    );
   }
 } finally {
   rmSync(dir, { recursive: true, force: true });

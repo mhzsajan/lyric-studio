@@ -362,6 +362,11 @@ function prepareFont({ font, lrc, audio, fontFile, layout }) {
   const args = [
     path.join(ROOT, "render.mjs"), audio, lrc,
     "--no-audio", "--length", "30", "--prepare-only",
+    // The .lrc here is a vehicle for a real font, not the deliverable: what
+    // this measures is advance width. render.mjs stops when a song has no ends
+    // file (gotcha 19/37), which is right for a render and wrong for a
+    // measurement, so this declines the stop explicitly.
+    "--allow-missing-ends",
   ];
   if (fontFile) args.push("--font-file", fontFile);
   if (layout) args.push("--legacy-font", fontFile, "--layout-file", layout, "--font", font);

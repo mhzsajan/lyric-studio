@@ -19,6 +19,11 @@
  *   --color <#hex>      text colour                  (default #ffffff)
  *   --seed <text>       animation seed (default: song title from the .lrc)
  *   --report-only       print the cue list and exit -- no render
+ *   --ends <file>       end timings; by default looked for beside the .lrc as
+ *                       <song>.remotion_end.lrc, then <song>.ends.txt. With no
+ *                       ends file the render STOPS rather than estimating
+ *                       every line from the next line's start; pass
+ *                       --allow-missing-ends to mean it
  *   --batch <dir>       render every audio+lrc pair in <dir>
  *   --styled            full-frame styled video (LyricStyled): painted
  *                       background, title cards, white halo, mix placement --
@@ -912,24 +917,65 @@ async function run(audioPath, lrcPath) {
       return;
     }
   } else {
-    console.log("  ends       : none found, estimating from the next line");
-    if (looksPaired) {
-      // The .lrc is named like one half of a pair, so an ends file was
-      // expected. Name the exact path that was looked for: a wrong name is a
-      // rename away from working, and "none found" gives no way to find it.
-      console.log(
-        "               looked for " + path.basename(endsCandidates[0]) +
-          " and " + path.basename(endsCandidates[1]) +
+    // No ends file. Every cue is about to be given an ESTIMATED end -- the
+    // next line's start -- which is exactly the lingering-lyric failure the
+    // ends file exists to remove: a line sung before a long instrumental
+    // stays on screen until whatever comes next, and the render still exits
+    // 0 with a plausible-looking file whose timing is not the timing that
+    // was tapped. That is gotcha 19's failure, and it survived a fix that
+    // only made the report name the paths it looked for: the message prints
+    // between the cue list and the render, scrolls past, and no script can
+    // see it because the exit code stayed 0.
+    //
+    // So this is a hard stop. A fallback that quietly produces a wrong
+    // deliverable is a failure, not a default -- and the fix is one flag,
+    // which means the alternative is always available and never accidental.
+    // --allow-missing-ends is the way to mean it.
+    const explicitEnds = flag("--ends");
+    const endsUnreadable = endsFound && endsText == null;
+    console.error("");
+    console.error("  ends       : NONE -- every line would be ESTIMATED from the next");
+    console.error("               line's start instead of using your tapped ends.");
+    if (explicitEnds) {
+      // A path was named by hand and it is not there. That is a different
+      // mistake from "no file was written", and it needs a different fix, so
+      // it is not folded into the "looked for" list below.
+      console.error("               --ends " + explicitEnds + " does not exist.");
+    } else if (endsUnreadable) {
+      console.error("               " + endsCandidates[0] + " is there but could not");
+      console.error("               be read -- the error is above.");
+    } else {
+      // Name the exact paths: a wrong name is a rename away from working, and
+      // "none found" gives no way to find it.
+      console.error(
+        "               looked for " +
+          endsCandidates.map((p) => path.basename(p)).join(" and ") +
           " beside the .lrc -- neither is there"
       );
-      console.log(
-        "               (Song Timer 'For Remotion AI' writes both halves; " +
-          "if you renamed one, rename the other to match)"
-      );
+      if (looksPaired) {
+        // The .lrc is named like one half of a pair, so an ends file was
+        // expected and one of the two was probably renamed.
+        console.error(
+          "               (Song Timer 'For Remotion AI' writes both halves; " +
+            "if you renamed one, rename the other to match)"
+        );
+      } else {
+        console.error(
+          "               (Song Timer 'For Remotion AI' writes one; put it beside the .lrc)"
+        );
+      }
+    }
+    console.error("");
+    if (has("--allow-missing-ends")) {
+      console.log("  ends       : none found, estimating from the next line" +
+        " (--allow-missing-ends)");
     } else {
-      console.log(
-        "               (Song Timer 'For Remotion AI' writes one; put it beside the .lrc)"
-      );
+      console.error("  Re-export both halves from Song Timer, point --ends at the");
+      console.error("  file, or pass --allow-missing-ends to render with the");
+      console.error("  estimates anyway.");
+      console.error("");
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -1510,6 +1556,9 @@ if (BATCH) {
       "    --report-only    just print the cue list",
       "    --ends <file>    end timings; by default looked for beside the .lrc as\n                     <song>.remotion_end.lrc, then <song>.ends.txt",
       "    --allow-stale-ends  render even if most ends cannot be applied",
+      "    --allow-missing-ends  render even if NO ends file is found; every line\n" +
+        "                     is then estimated from the next line's start, which\n" +
+        "                     is why it is not the default (gotcha 19, 37)",
       "    --check          preflight only: verify timings, then exit",
       "    --title-card     show the song title + band at the start",
       "    --title-card-outro  also repeat the title at the end",

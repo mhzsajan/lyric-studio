@@ -147,6 +147,10 @@ async function main() {
         "--size-mode", "off",
         "--font-file", file,
         "--shadow", "0 2px 6px rgba(0,0,0,0.75)",
+        // A sheet compares faces, not timing, and the .lrc is only carrying
+        // words. render.mjs stops when a song has no ends file (gotcha 19/37);
+        // for a look check that stop is noise, so it is declined here.
+        "--allow-missing-ends",
         "--prepare-only",
       ],
       { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }
