@@ -138,7 +138,7 @@ all delivered to `G:/Lyrical Video/Allare/`:
 
 | Video | Font | Character | Eye-check verdict (2026-09-30) |
 |---|---|---|---|
-| `Allare - Motion - Abhinav.mp4` | Abhinav | the Perfect Example font; classic calligraphic bold | ❌ user still caught a wrong spelling — glyph-level defect, gotcha 37 |
+| `Allare - Motion - Abhinav.mp4` | Abhinav | the Perfect Example font; classic calligraphic bold | ❌ user still caught a wrong spelling — glyph-level defect, gotcha 38 |
 | `Allare - Motion - Ananda Lipi.mp4` | Ananda Lipi Bold BT | heavy traditional headline | ✅ confirmed |
 | `Allare - Motion - Himalaya.mp4` | Himalayabold | soft rounded classic | ✅ confirmed |
 | `Allare - Motion - Shreenath.mp4` | Shreenath Bold | condensed tall display | ✅ confirmed |

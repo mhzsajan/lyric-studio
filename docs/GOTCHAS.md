@@ -9,6 +9,16 @@ numbered 31 is below.
 Read this file before changing anything that measures, measures timing, or
 chooses a font.
 
+> **On a gate and a font.** A passing gate proves a font *can* be used, never
+> that it should be. The evidence is uncomfortable: 29 AMS layouts are
+> gate-rejected in seconds; 5 fonts that *declare* PREETI print raw ASCII with
+> exit 0; and 2 genuine PREETI fonts (`deepankar`, `abhinav`) spell individual
+> words wrong **at the glyph level while every automated check stays green** —
+> correct class, clean round-trip, full cmap coverage, correct frame checks, wrong
+> letters. So the list of fonts to actually use is
+> [FONTS-VERIFIED.md](FONTS-VERIFIED.md), and `abhinav` is on its *failed* list.
+> That is gotcha 38.
+
 ## Index
 
  1. **process.env in components is statically replaced at build time.**
