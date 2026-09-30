@@ -3,6 +3,7 @@ import { Composition, staticFile } from "remotion";
 import { getAudioDurationInSeconds } from "@remotion/media-utils";
 import { parseLrc } from "./parse-lrc.mjs";
 import { LyricOverlay } from "./LyricOverlay.jsx";
+import { RituPiece } from "./ritu/RituPiece.jsx";
 import { Styled } from "./Styled.jsx";
 import { WidthCalib } from "./WidthCalib.jsx";
 import { SAMPLE_W, SAMPLE_H } from "./width-model.mjs";
@@ -226,6 +227,26 @@ export const RemotionRoot = () => {
           // "transparent" renders an alpha overlay (mov); render.mjs passes
           // "#000000" for mp4 so the plate is keyable with Add/Screen blend.
           background: "transparent",
+        }}
+      />
+      <Composition
+        id="RituPiece"
+        component={RituPiece}
+        durationInFrames={Math.round(FALLBACK_SECONDS * 30)}
+        fps={30}
+        width={WIDTH}
+        height={HEIGHT}
+        // Full-frame picture, like LyricStyled: h264 is the deliverable and alpha
+        // is meaningless, so no ProRes default here.
+        defaultCodec="h264"
+        calculateMetadata={resolveMetadata}
+        defaultProps={{
+          cues: [],
+          // The beat grid, for the CAMERA only. See docs/RITU.md section 3: this
+          // reaches fallScale() and nothing that returns a text time.
+          beats: [],
+          fontSize: 108,
+          seed: "ritu",
         }}
       />
       <Composition
