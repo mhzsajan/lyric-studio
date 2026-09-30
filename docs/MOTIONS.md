@@ -127,6 +127,12 @@ last song" is not evidence; slot agreement is per-song luck.
 
 ## The five-font lineup (2026-09-30, same song, same motion deck)
 
+**The first delivery of this lineup was WRONG — every font drew जाउू for
+जाऊ and हेो for हो (gotcha 31) — and was re-delivered after the converter
+fix (3825634). The procedure below now includes step 4, which is what
+actually catches this class of bug; steps 1-3 passed while the glyphs were
+wrong.**
+
 Five PREETI-class fonts were verified and rendered end to end for Allare,
 all delivered to `G:/Lyrical Video/Allare/`:
 
@@ -142,13 +148,23 @@ Verification chain per font (the procedure to repeat):
 
 1. **Class check** — `sweep.json` class must be PREETI (gotcha 30).
 2. **Round-trip** — `py scripts/lrc_legacy.py song.lrc out/_rt.lrc` must
-   report zero "not round-trip" lines for the song.
+   report zero "not round-trip" lines for the song. NOTE: a clean
+   round-trip proves only that the keys decode back through the SAME
+   table that generated them; it cannot catch a table that disagrees with
+   the font. That is why step 4 exists.
 3. **Glyph still at 3x** — render one punctuation-heavy cue
    (`--prepare-only` + `npx remotion still`), crop the first word, zoom,
    LOOK at it. Ten candidates were screened this way; meghubold failed
    visually (सो wrong) despite passing the class and round-trip checks,
    which is exactly why step 3 exists.
-4. **Render + critique** — all five videos critique PASS (20-30/30 text
+4. **Library-first keys** — for Preeti, the keys MUST come from
+   npttf2utf's preetimapper (lrc_legacy.py now enforces this). If you are
+   ever tempted to hand-build a Preeti key sequence, don't: the table
+   decomposition path is what shipped जाउू/हेो in five fonts at once,
+   with green checks. For a NEW layout (non-Preeti), encode one song both
+   through the generated layout and through the Preeti library and diff —
+   divergences need visual proof, not trust.
+5. **Render + critique** — all five videos critique PASS (20-30/30 text
    present, no-edge-clip, duration).
 
 Parallel-render note: a render writes `src/lyrics.generated.js` and
