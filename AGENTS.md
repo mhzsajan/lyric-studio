@@ -241,6 +241,7 @@ src/parse-lrc.mjs     LRC -> cues {time, end, text}. Handles [mm:ss.xx]
 | `docs/PLAYBOOK.md` | why Remotion, what actually made rendering fast (and what did not), animation guidance, Remotion-only traps |
 | `docs/REFERENCE.md` | everything measured off the target video, and the gaps vs ours |
 | `docs/FONTS.md` | the 15 legacy `01 Fonts` vs 9 Unicode fonts that need no transcoding |
+| `docs/FONTS-VERIFIED.md` | **the short list of fonts verified to write a given song**, and the 3-step procedure for checking a new one. Yantramanav (default) and Abhinav are both verified |
 | `docs/MOTIONS.md` | the 22-style motion catalog, deck-shuffle picker, the Allare motion recipe, and the AMS Cinema font-class failure |
 
 **Scripts** — all rerunnable; prefer these over re-deriving anything by hand
@@ -736,9 +737,28 @@ a grey rectangle over the camera feed. `scripts/reference_survey.py` checks
     splits one character into two letters. The candrabindu is the gentler
     failure — `सँगै` → `संगै` changes the spelling, usually not the word.
 
-    **All 79 layouts fail this song**, confirmed across every layout rather than
-    just the one: aNepali publishes neither character as a key, so no generated
-    layout can contain them. No different legacy font helps.
+    **All 79 GENERATED layouts fail this song**, confirmed across every layout
+    rather than just the one: aNepali publishes neither character as a key, so
+    no *generated* layout can contain them. No different generated layout helps.
+
+    **CORRECTION, added later (gotcha 23, erratum). "All layouts" was too strong
+    and it cost an hour of avoidable work.** The measurement above covers the
+    layouts in `../nepali-legacy-fonts/layouts/`, which are all *generated*. It
+    says nothing about `npttf2utf`'s **built-in Preeti map**, which has keys for
+    both characters. So a font whose `sweep.json` class is **`PREETI`** — like
+    **Abhinav** — *can* write Allare, and does:
+
+    ```
+    words round-tripped through Preeti      54 / 54
+    distinct keys the song emits            45
+    keys with no glyph in Abhinav.TTF       0   (cmap holds 180 codepoints)
+    ```
+
+    The correct statement of the failure is therefore **"Allare is unwritable
+    in a GENERATED layout"**, not "in any legacy font". The deciding property is
+    the font's `class`, not the fact that it is legacy — which is gotcha 34's
+    point arriving from the other direction. Verified fonts and the procedure
+    for checking a new one: **docs/FONTS-VERIFIED.md**.
 
     The render exits 0, the file is the right length, the plate is pure black,
     and `check_output.py` passes every check, because every check looks at the
