@@ -29,11 +29,17 @@ sys.stdout.reconfigure(encoding="utf-8")
 STAMP = re.compile(r"\[(\d{1,3}):([0-5]?\d(?:[.:]\d{1,3})?)\]")
 META = re.compile(r"^\[(ti|ar|al|au|by|re|ve|length|offset|ti-font|ti-fontfile):", re.I)
 PAD = 10
-LABEL_W = 150
-COL_W = 460
-ROW_H = 150
-COLS = 3
 LIT = 40
+
+# Cell geometry. Tuned by hand because a word sheet is only useful if the words
+# are BIG enough to actually read -- a 54-word grid at thumbnail size is the same
+# as no sheet at all, since a reader cannot tell a wrong glyph from a right one
+# at 40 px. Fewer columns, taller rows, and each cell holds the two renders side
+# by side so they are compared in one glance.
+LABEL_W = 170
+COL_W = 620
+ROW_H = 210
+COLS = 2
 
 
 def find_ffmpeg():
@@ -86,7 +92,7 @@ def grab_midframes(ffmpeg, video, n, slot, tmp, tag):
     return out
 
 
-def crop_lit(png, height):
+def crop_lit(png, height, col_w):
     """Crop to the lit bounding box, then scale to a common row height."""
     from PIL import Image
     im = Image.open(png).convert("L")
@@ -98,7 +104,7 @@ def crop_lit(png, height):
     w, h = im2.size
     if h == 0:
         return None
-    scale = min(COL_W / w, (height - 2 * PAD) / h)
+    scale = min(col_w / w, (height - 2 * PAD) / h)
     return im2.resize((max(1, int(w * scale)), max(1, int(h * scale))),
                       Image.LANCZOS)
 
@@ -111,6 +117,10 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--slot", type=float, default=1.0)
     ap.add_argument("--labels", help="file with one 'index<TAB>keys' per line")
+    ap.add_argument("--cols", type=int, default=COLS, help="cells per row")
+    ap.add_argument("--row-h", type=int, default=ROW_H)
+    ap.add_argument("--first", type=int, default=0, help="first word index")
+    ap.add_argument("--count", type=int, default=0, help="how many (0 = all)")
     a = ap.parse_args()
 
     ffmpeg = find_ffmpeg()
@@ -125,55 +135,68 @@ def main():
                 i, k = raw.rstrip("\n").split("\t", 1)
                 labels[int(i)] = k
 
+    # A slice of the word list, so a 54-word sheet can be shown in three parts
+    # at a readable size instead of one grid too dense to judge a glyph in.
+    all_words = words
+    lo = max(0, a.first)
+    hi = lo + a.count if a.count else len(words)
+    words = all_words[lo:hi]
+    idx_of = {i: lo + i for i in range(len(words))}
+
     tmp = tempfile.mkdtemp(prefix="wordsheet-")
     try:
         from PIL import Image, ImageDraw
         print("  extracting %d frames from each render..." % len(words))
-        A = grab_midframes(ffmpeg, a.test, len(words), a.slot, tmp, "A")
-        B = grab_midframes(ffmpeg, a.reference, len(words), a.slot, tmp, "B")
+        A = grab_midframes(ffmpeg, a.test, hi, a.slot, tmp, "A")[lo:hi]
+        B = grab_midframes(ffmpeg, a.reference, hi, a.slot, tmp, "B")[lo:hi]
 
-        rows = (len(words) + COLS - 1) // COLS
-        W = COLS * (LABEL_W + 2 * COL_W)
-        H = rows * ROW_H
+        cols, row_h = max(1, a.cols), max(40, a.row_h)
+        rows = (len(words) + cols - 1) // cols
+        W = cols * (LABEL_W + 2 * COL_W)
+        H = rows * row_h
         sheet = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(sheet)
         missing = 0
 
         for i in range(len(words)):
-            r, c = divmod(i, COLS)
+            r, c = divmod(i, cols)
             x0 = c * (LABEL_W + 2 * COL_W)
-            y0 = r * ROW_H
+            y0 = r * row_h
 
-            # ASCII label: index + the key sequence it becomes.
-            draw.text((x0 + 4, y0 + 4), "%03d" % i, fill=(120, 120, 120))
-            k = labels.get(i, "")
+            # ASCII label: index + the key sequence it becomes. Both are ASCII,
+            # so nothing here needs shaping.
+            gi = idx_of[i]
+            draw.text((x0 + 6, y0 + 10), "%03d" % gi, fill=(120, 120, 120))
+            k = labels.get(gi, "")
             if k:
-                # Keys are ASCII, so this needs no shaping.
-                draw.text((x0 + 4, y0 + 24), k[:22], fill=(0, 90, 170))
-            draw.rectangle([x0 + LABEL_W + COL_W, y0, x0 + LABEL_W + 2 * COL_W, y0 + ROW_H],
-                           outline=(220, 220, 220))
+                draw.text((x0 + 6, y0 + 34), k[:24], fill=(0, 90, 170))
+            draw.rectangle([x0 + LABEL_W + COL_W, y0, x0 + LABEL_W + 2 * COL_W, y0 + row_h],
+                           outline=(225, 225, 225))
+            draw.rectangle([x0, y0, x0 + LABEL_W + 2 * COL_W, y0 + row_h],
+                           outline=(240, 240, 240))
 
             for k2, path in enumerate((A[i], B[i])):
                 if not path:
                     missing += 1
                     continue
-                im = crop_lit(path, ROW_H)
+                im = crop_lit(path, row_h, COL_W)
                 if im is None:
                     missing += 1
                     continue
                 x = x0 + LABEL_W + k2 * COL_W + (COL_W - im.width) // 2
-                y = y0 + (ROW_H - im.height) // 2
+                y = y0 + (row_h - im.height) // 2
                 sheet.paste(im, (x, y))
 
-        # Column headers drawn last so they are not overwritten.
+        # Column headers drawn last so they are not overwritten by a paste.
         for c, name in enumerate((os.path.basename(a.test),
                                   os.path.basename(a.reference))):
             x = c * (LABEL_W + 2 * COL_W) + LABEL_W
-            draw.rectangle([x, 0, x + COL_W, 26], fill=(240, 240, 240))
-            draw.text((x + 6, 7), name[:60], fill=(20, 20, 20))
-        sheet = sheet.crop((0, 0, W, H - 26))
+            draw.rectangle([x, 0, x + COL_W, 30], fill=(238, 238, 238))
+            draw.text((x + 8, 9), name[:70], fill=(20, 20, 20))
+        sheet = sheet.crop((0, 0, W, H - 30))
         sheet.save(a.out)
-        print("  wrote %s  (%dx%d, %d rows of %d)" % (a.out, sheet.width, sheet.height, rows, COLS))
+        print("  wrote %s  (%dx%d, %d words in %d rows of %d)"
+              % (a.out, sheet.width, sheet.height, len(words), rows, cols))
         if missing:
             print("  %d blank cells -- a word had no lit pixels in one column" % missing)
     finally:
