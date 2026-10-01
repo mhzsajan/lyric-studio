@@ -199,9 +199,69 @@ const COMMON = [
 // which puts a visible notch in the shirorekha -- the table in letters.js calls
 // 0.12 "badly broken". It is wanted, so it is asked for. 0.06 is the value to drop
 // to if the headline stepping reads as damage.
-const FAST = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
+//
+// --type IS OFF, ON EVERY SONG, AND THAT IS A CORRECTNESS DECISION.
+//
+// It was `letter` here for the whole batch, and it was reported twice: "the red
+// word makes the sentence incorrect", and then "some issue with jam na maya".
+//
+// The reveal clips each syllable with `inset(0 X% 0 0)`, so MID-REVEAL a syllable is
+// half-drawn -- and a half-drawn Devanagari syllable is a DIFFERENT LETTER. On a
+// white word that is a soft entrance and nobody mentions it. On the one word in the
+// line that is COLOURED it is glaring, because that is the word the eye goes to.
+//
+// Two fixes were applied in the wrong order, which is worth recording. The first
+// fitted the delay chain to the cue so the reveal finished IN TIME. That is a real
+// fix -- but it addresses a TIMING fault, and what was reported is a LEGIBILITY
+// fault. The report came back, and the only fix for it is not to clip syllables
+// at all.
+//
+// The honest cost, on the record: the batch loses the typed-on reveal. Every other
+// motion layer still runs -- depth, --motion, word and letter animation -- so the
+// line still moves. Given a choice between an effect and a letter that reads as a
+// different letter, the letter wins.
+const FAST = ["--loudest", "--color-mode", "calm", "--type", "off", "--letter-var", "0.12"];
 
-const SLOW = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
+const SLOW = ["--loudest", "--color-mode", "calm", "--type", "off", "--letter-var", "0.12"];
+
+// THE NEPALI TITLE WORDS, FOR THE SONGS WHOSE .lrc TITLE CANNOT SUPPLY THEM.
+//
+// Four songs carry a Devanagari [ti:] and match on their own -- Allare fires on
+// "अल्लारे" and needs nothing here. Three do not:
+//
+//   02  [ti:] Jaam na Maya   English title over a Nepali lyric
+//   03  [ti:] Kali Kali      same
+//   07  [ti:] Wora Para      same
+//
+// The title is ENGLISH and the lyric is NEPALI, so matching the tag can never work:
+// the tokens are "jaam"/"na"/"maya" and no line of Devanagari text normalises to
+// any of them. The matcher is not broken -- it is being handed a word in the wrong
+// script. That is why these are a table here and not a flag on the command line.
+//
+// A comma separates the words of a two-word title, and a comma can therefore never
+// be part of a word. It works for all three because none of them uses one.
+//
+// WORA PARA IS THE INTERESTING ONE, and the value is not a guess. Its title words
+// are written HYPHENATED in the lyric -- "वर-पर" -- and normToken() strips the
+// Devanagari danda and the Latin punctuation but NOT the hyphen. So "वर-पर," is
+// ONE token, and asking for "वर,पर" would match nothing at all while the report
+// cheerfully said it fired on 0 words.
+//
+// And exact whole-word match cannot be satisfied here even in principle: the title
+// is "वर पर", two words, and the line has "वर-पर", one compound, which is neither of
+// them. So what is matched is the REFRAIN AS SUNG, in both the forms it takes:
+// "वर-पर" (3 lines) and "पर-पर" (3 more). Both are the title phrase, and the brief
+// was "every time it appears". Pass "वर-पर" alone to narrow it to 3 lines.
+//
+// Verified against the real matcher, not reasoned about: 1 of 25, 3 of 19, and 6 of
+// 40 distinct lines respectively. scripts/title_probe.mjs re-checks all three
+// without rendering.
+const TITLES = {
+  "02 Jam Na Maya Jam BPM 115": "जाम,माया",
+  "03 Kali Kali BPM 120": "काली",
+  "07 Wora Para BPM 115": "वर-पर,पर-पर",
+};
+
 
 // [folder, song, seconds, treatment, fontV1, fontV2]
 // `seconds` is PROBED by scripts/plan.mjs, never typed from memory.
@@ -349,6 +409,12 @@ for (let i = 0; i < work.length; i++) {
     continue;
   }
 
+  // The title word, where the .lrc's own [ti:] cannot supply it. Appended LAST and
+  // only when present, so it is the single occurrence of the flag in this argv --
+  // render.mjs takes the last one, and this file had a duplicate-flag bug that is
+  // exactly this shape.
+  const titleFlags = TITLES[j.folder] ? ["--title-word", TITLES[j.folder]] : [];
+
   // The class picks the flags. Passing the wrong pair is not a style error, it is
   // a corruption: --font-file on a Preeti file fails the gate outright, and
   // --legacy-font on a Unicode file would transcode it into mojibake with no
@@ -375,6 +441,7 @@ for (let i = 0; i < work.length; i++) {
     "--out", out,
     ...COMMON,
     ...j.treatment,
+    ...titleFlags,
   ], { cwd: ROOT, stdio: "pipe", encoding: "utf8" });
 
   const log = (r.stdout || "") + (r.stderr || "");
