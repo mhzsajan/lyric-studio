@@ -255,6 +255,10 @@ be argued with rather than re-guessed.
 
 ### The fourteen overlays
 
+> **THIS TABLE IS THE ORIGINAL SPEC, AND THE DELIVERED BATCH DIVERGES FROM IT IN
+> FOUR PLACES.** Kept, because a spec that is edited to match whatever was built
+> cannot be argued with. The divergences and why are in the block after it.
+
 | setting | value | why |
 |---|---|---|
 | size | `--size-preset medium` (105 / 0.08 / 0.05) | house size, judged on Kali Kali |
@@ -268,6 +272,30 @@ be argued with rather than re-guessed.
 | `--word-fill 0.78` | both | the hold before the next line |
 | `--wrap rows` | both | long lines typeset, not shrunk |
 | `--x-pos` | both | per-cue horizontal placement |
+
+### Where the delivered batch left this table, and why
+
+Four of those eleven were changed during rendering, in response to things that were
+seen in the finished files rather than predicted in advance. **The spec is not
+retro-fitted; this is the list.**
+
+| | spec | delivered | why |
+|---|---|---|---|
+| colour | `duo`, accent `0.35`, per word/letter | **`--color-scheme warm`**, accent **`0.12`**, a **run of 2–3 syllables** | "per letter… 2 3 letters only" — the grain is now the syllable, and only ~1 word in 8 is coloured. `duo` also had a wide chroma band, which is what makes one word in a row paler than its neighbour — the "fading colours" complaint |
+| `--type` | `letter`, both | **off** | a syllable revealed by clipping is **half-drawn**, and a half-drawn Devanagari syllable is a different letter. Glaring on the one accented word in a line. Gotcha 47 |
+| `--x-pos` | both | **off** | it moved a settled line sideways between cues, which with the motion layers already on read as jitter rather than as variety |
+| `--cut` | fast songs only | **on everywhere** | the torn-paper look was asked for back, after being turned off |
+
+Two more values were added rather than changed, because the spec was silent and the
+absence was the fault: **`LINE_HEIGHT` 1.55** as one constant (was a literal `1.32`
+in five places, which cropped descenders), and the **30/40/50 band with
+`MAX_BOTTOM = 0.72` and `SIDE_SAFE_VW = 4`** — the stage screen sits high, so the
+usable area is a band and not an edge.
+
+And three songs are still **waiting on a human**: their `.lrc` titles are English
+over Nepali lyrics, so `--title-word` has to be supplied. `render.mjs` prints a
+warning on every run saying exactly which flag to add. That is not a bug and it
+will not go away on its own.
 
 ### The slow songs — Ritu and Timilai Bhuleko, and nothing else
 

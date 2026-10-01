@@ -40,6 +40,17 @@ chooses a font.
 29. **"WINS" AND "FLOOR" CANNOT BOTH BE TRUE, AND `Math.max()` IS THE FLOOR**
 30. **A FEATURE THAT CAN BE WRONG MUST BE OFF BY DEFAULT, NOT ON**
 31. **THE ENDS FILE HAS TO REACH THE COMPOSITION, NOT JUST THE REPORT**
+37. **A FALLBACK THAT PRODUCES A PLAUSIBLE WRONG DELIVERABLE IS A FAILURE**
+39. **A CAP THAT IS NOT MENTIONED AT THE CALL SITE IS A FEATURE SWITCHED OFF**
+40. **A REPORT THAT READS WHAT THE RENDERER WILL FILL IS ALWAYS WRONG**
+41. **A DUPLICATE FLAG IS INVISIBLE IN A DIFF AND DECISIVE AT RENDER TIME**
+42. **A CONSTANT THAT MUST VARY WITH THE INPUT IS MEASURED, NOT CHOSEN**
+43. **A SHRINK BUDGET THAT SCALES WITH THE SIZE IT CHOSE IS A LOOP**
+44. **ONE CONSTANT, NOT FIVE LITERALS — THE DISAGREEMENT PRESENTS AS NOISE**
+45. **AN INSTRUMENT THAT MEASURES THE WRONG QUANTITY IS WORSE THAN NONE**
+46. **A NAMED COLOUR IS DATA, NOT A HUE TO RECONSTRUCT**
+47. **A PARTIAL GLYPH IS A DIFFERENT GLYPH, AND IT IS NOT A TIMING FAULT**
+48. **A DEVICE IN THE SCREENSHOT MAY NOT BE A DEVICE IN THE FILE**
 
 ---
 
@@ -773,4 +784,175 @@ chooses a font.
     branch in this pipeline is a decision the operator makes out loud.** A
     default that yields a plausible artifact is worse than an error, because
     the error would have been found.
+
+39. **A CAP THAT IS NOT MENTIONED AT THE CALL SITE IS A FEATURE THAT HAS BEEN
+    SWITCHED OFF WITHOUT SAYING SO.**
+
+    `src/letters.js` clamps `--letter-var` to `LETTER_SIZE_CAP`. That cap was
+    `0.03` for most of its life, so `--letter-var 0.07`, `0.12`, `0.18` and `0.25`
+    all produced **byte-identical output**. The flag was documented, wired, and
+    checked. The feature was wired, documented, and **did nothing at any value a
+    user would actually try** — and it looked exactly like a feature nobody
+    implemented, which is the failure mode that survives longest because there is
+    no error to notice.
+
+    It is the same shape as gotcha 30 and 33 (a feature that can be wrong must be
+    off by default) seen from the other side: there, a feature defaulted ON and
+    had to be turned off; here, a feature is effectively OFF and has to be noticed
+    being off. **Neither produces a diagnostic.**
+
+    The general rule: **when a value is clamped, quote the clamp at the call
+    site.** `render.mjs` now prints the effective value, and `check_letters.mjs`
+    asserts the cap is what the caller thinks it is.
+
+40. **A REPORT THAT READS WHAT THE RENDERER WILL FILL IS WRONG IN THE SAME
+    DIRECTION EVERY TIME.**
+
+    The title-word report said `अल्लारे` was "in NO cue". It fires correctly, at
+    2:56, on `हो... मोहनीको बाटो जादै नजाने म परेँ अल्लारे`. The report read
+    `props.cues`, which `Root.jsx` fills **at render time** — so at report time it
+    is empty, and the report described an empty object rather than the song. The
+    same bug made `props.title` print "(none found in the .lrc)".
+
+    Three of the seven songs' reports were wrong this way before it was caught,
+    and all three were wrong in the direction of *claiming a working thing is
+    broken*. That is the expensive direction: the fix is to re-render something
+    that was already right.
+
+    The general rule: **a report must read the same data the renderer reads, from
+    the same place.** Here the renderer re-parses; so does the report. It is gotcha
+    31 ("the ends file has to reach the composition") pointed the other way — that
+    one was data that never reached the render, this is a report that never looked
+    at the render.
+
+41. **A DUPLICATE FLAG IS INVISIBLE IN A DIFF AND DECISIVE AT RENDER TIME.**
+
+    `scripts/render_all.mjs` had `--color-scheme` in both its common block and a
+    per-song block. Whichever came last won, silently. The batch shipped a colour
+    density nobody had approved, from a file that reads correctly line by line.
+
+    The general rule: **one value per flag per file, and read the file rather than
+    the conversation when you want to know what ran.** A `diff` cannot show this,
+    which is why it is a gotcha and not a review note.
+
+42. **A CONSTANT THAT MUST VARY WITH THE INPUT IS MEASURED, NOT CHOSEN.**
+
+    `--cut`'s tear bar was `0.34em` with a `rgba(255,255,255,0.85)` top edge. The
+    bar sits at `bottom: 0` of the word box, so the only room it has is
+    `descent − inkBottom` for whatever face is in use — and that varies **79×**
+    across this batch's fonts, from 0.006em to 0.474em. A fixed `0.34em` bar drew
+    a bright horizontal edge **across the bottom of every letter in ten of the
+    eleven fonts.**
+
+    It looked like a decoration and it was a defect. `scripts/metrics_probe.py
+    --write` now measures each face's room into `width.json` and `check_cut.mjs`
+    asserts the bar never reaches the ink.
+
+    The general rule: **if the value's correct answer depends on the font, the
+    song, or the frame, it is a measurement and writing it down is a guess.** The
+    one that was not measured in that file is `LETTER_ANGLE_CAP = 2.0°`, and the doc
+    says so in the section that describes it.
+
+43. **A SHRINK BUDGET THAT SCALES WITH THE SIZE IT CHOSE IS A FEEDBACK LOOP WITH
+    POSITIVE GAIN.**
+
+    `--wrap rows` measured its row budget in `em`, then **scaled the budget by the
+    ratio of the size finally chosen to the size requested**. So: shrink the type,
+    measure a narrower band, fit fewer words per row, make the block taller, decide
+    it must shrink further. It produced **8px type at 3:00** across twelve rows, and
+    the type looked randomly small on some cues and fine on others, which is what
+    a positive-gain loop looks like from the outside.
+
+    Two fixes, and the second is the one that mattered: the row count is decided at
+    the **full requested size** and never at the fitted one; and the shrink has a
+    **hard floor** (`MIN_FRACTION = 0.78`). A line that will not fit is a wrapping
+    problem, not a sizing one.
+
+    The general rule: **an iterative layout must decide its structure once, from
+    the input, and then only scale.** Any step whose output feeds its own input as a
+    multiplier is a loop, and the failure looks like noise rather than like a bug.
+
+44. **ONE CONSTANT, NOT FIVE LITERALS — BECAUSE THE DISAGREEMENT PRESENTS AS
+    NOISE.**
+
+    `LINE_HEIGHT` was the literal `1.32` in five places. Two of those places decide
+    whether a line may be the size it asked for. 1.32 is shorter than the faces are
+    tall (1.6–1.8em, above-matra down to a ु), so glyphs overflowed their own line
+    box and the crop landed on the descender: "the last छु word is cut to the
+    bottom". Changing one of the five copies fixes nothing and looks like it did.
+
+    The general rule: **when a number appears more than once, extract it, and when
+    it is a tuning value, extract it even if there is only one copy yet.** A literal
+    repeated is a future disagreement with a random-looking symptom.
+
+45. **AN INSTRUMENT THAT MEASURES THE WRONG QUANTITY IS WORSE THAN NO INSTRUMENT.**
+
+    Four of these happened, and the two that were corrected are the dangerous ones,
+    because they had been believed:
+
+    - **`luma()` was hue-blind.** It reported one number for pure red, pure blue and
+      pure blue-violet, which are luma 54, 38 and 18. Blue carries 0.0722 of the
+      luminance against red's 0.2126 — identical HSL differs **7×** in brightness.
+      So the `LUMA_FLOOR` assertion in `check_color.mjs` was measuring pure red's
+      brightness **while looking at a blue swatch**, and cleared colours that are
+      invisible. It produced a green tick on unreadable words. This is rule 2's
+      purest form: an instrument that cannot fail.
+    - **`type_size.py` counted the `--scanlines` overlay as ink**, and sampled a
+      frame mid-entrance, so it reported 8px where the picture shows readable type.
+    - **`colour_words.py` called an all-white line "the fault."** White *is* the
+      goal; a fault is every word carrying the same chroma with no white anywhere.
+    - **`lightForLuma()` returned `(lo+hi)/2`** from its bisection, which lands a
+      hair under the target often enough that every dark hue came out at 158/255
+      against a floor of 158.1 — **the floor assertion failing on its own output.**
+
+    The general rule, and it is the one to carry: **when the instrument and the
+    picture disagree, the picture wins, and the response is to fix the instrument —
+    not to believe it.** A solver that returns less than the number it was asked for
+    will eventually be blamed for the caller's arithmetic.
+
+46. **A NAMED COLOUR IS DATA, NOT A HUE TO RECONSTRUCT.**
+
+    "Mahogany" is `#420D09`. Rebuilding it as "a dark red near hue 0" is a
+    different colour that happens to sort near the same place, and it is how a
+    palette of twenty named reds quietly stops being twenty named reds.
+    `NAMED_PALETTES` holds the real hex values — `reds` (20), `materials` (those
+    plus 13 metals and earths), and `warm` (10, the shipped ramp).
+
+    Seven of the twenty named reds measure **below** the luma floor — mahogany at
+    24, maroon at 27. They are **lifted** by `ensureReadable()`, and the lifts are
+    enumerated by `check_color.mjs` rather than hidden. Dropping them would have
+    honoured the names and lost the words.
+
+47. **A PARTIAL GLYPH IS A DIFFERENT GLYPH, AND THAT IS NOT A TIMING FAULT.**
+
+    `--type letter` reveals by clipping each syllable with `inset(0 X% 0 0)`, so
+    mid-reveal a syllable is **half-drawn** — and a half-drawn Devanagari syllable
+    is a different letter. It was reported twice, as "the text breaks the meaning of
+    the letter" and as "some issue with jam na maya", and both were fixed twice in
+    the wrong place: first by fitting the delay chain to the cue so the reveal
+    *finishes in time*, which is a **timing** fault and was a real fix; and then the
+    report came back, because the remaining problem is a **legibility** fault and
+    no amount of fitting touches it.
+
+    On a white word a half-drawn syllable is a soft entrance and nobody mentions
+    it. On **the one word in the line that is coloured** it is glaring, because that
+    is the word the eye goes to. `--type` is off in the delivered batch and the
+    honest cost — the typed-on reveal — is on the record.
+
+    The general rule: **separate "this arrived too late" from "this is drawn
+    wrong."** They have the same symptom from the audience and opposite fixes, and
+    the first fix that works makes the second look like it was addressed.
+
+48. **A DEVICE IN THE SCREENSHOT MAY NOT BE A DEVICE IN THE FILE.**
+
+    A report showed a word with what looked like a grey box behind it. Measured:
+    **zero long grey runs in the frame**, and mid-tone counts of 1–7px per row, which
+    is antialiasing. It was a compression halo around bright yellow on black. The
+    A/B that settled it was rendering the *same frame* with the suspect flag on and
+    off — identical.
+
+    The general rule: **when a fault is described, look for it in the file before
+    changing the file.** Two hours of `--cut` A/B, tear-bar geometry and
+    mid-tone row profiles were spent establishing the absence of a box that was
+    never there. Extract the frame, count the pixels, and only then edit.
 

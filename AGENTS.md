@@ -76,44 +76,78 @@ Then **look at a frame**. No script can tell `द` from `ध`; only a human can.
 
 ## The house style
 
+This is the configuration the seven delivered videos were rendered with. It is
+`scripts/render_all.mjs` verbatim — one value per flag there, and a duplicate flag
+in that file is invisible in a diff and decisive at render time, which is how the
+batch once shipped a colour density nobody had approved.
+
 ```powershell
---loudest         # ALL of it: depth, motion, word+letter anim, size, colour
---size-preset medium   # 105 / 0.08 / 0.05  <- the house size (see below)
---motion wild        # per-line choreography from a seeded deck
---style  (unset)     # line entrances dealt from the 22-style pool
---word-anim karaoke  # newest word brightest
---letter-anim pop --letter-var 0.03
+--loudest            # depth, motion, word+letter anim, size, mix placement
+--size-preset medium # 105 / 0.08 / 0.05  <- the house size (see below)
+--letter-var 0.12    # PER-LETTER SIZE, and see the cap below before changing it
+--color-scheme warm  # the warm ramp: gold -> orange -> red -> crimson
+--color-hue 0
+--color-accent 0.12  # ~1 word in 8 is accented; the rest stay WHITE
+--color-mode calm    # per word. vivid+ steps hue ACROSS a word = "fading"
+--cut word           # the newspaper look, every word a clipping
+--wrap rows          # long lines become rows at full size
 --mode mix --mix-block 8
---size-mode word
---color-mode wild --color-hue 210 --color-scheme analogous
---cut word           # the newspaper look: every word a clipping
---type letter        # the typed-on reveal
---font-file ...\Yantramanav-Black.ttf
---shadow "0 3px 14px rgba(0,0,0,0.8)"
+--scanlines 40 --scanline-alpha 0.06
+--shadow "0 3px 16px rgba(0,0,0,0.85)"
+--font-file ...\arya\Arya-Bold.ttf     # ONE OF THE FOUR UNICODE FACES
 ```
+
+`--type letter` is **off** in the delivered files and that is deliberate — see
+`--cut and --type` below. `--x-pos` is **off**: it moved a settled line sideways
+between cues, which with the motion layers on was redundant as well as jittery.
 
 All of it is in **[docs/ANIMATION.md](docs/ANIMATION.md)** — every layer, every
 value, and the two hard rules motion must obey (finish inside the cue's own end;
 never travel past the frame margin).
 
+### Where the text sits, and why
+
+**Upper-mid, 30/40/50 of frame height.** This is a delivery constraint, not a
+composition one: the material is played on a stage screen that sits **high**, so the
+bottom of the frame is where the audience cannot see, and the top is lost to whatever
+is above the screen. The usable area is a band, not an edge.
+
+Three things enforce it, and all three exist because one of them alone did not work:
+
+| | what it does | why it was not enough alone |
+|---|---|---|
+| `geometry()` 30/40/50 | where a block **begins** | a block grows *downward*, so a many-row line walks straight back out of the band |
+| `MAX_BOTTOM = 0.72` | caps where a block may **end** | without it, 3:09 reached 94% of the frame |
+| `SIDE_SAFE_VW = 4` | 4vw clear on **both** sides | a band's `left` may be 0vw, and at 1:53 the ink began at exactly x=0 |
+
+`scripts/band_report.py` checks sampled cues against both edges. "Is it centred"
+would pass a block hanging off the bottom of the visible area.
+
 ### How a line is TYPESET, not shrunk
 
-`--wrap rows` (the default) breaks a long line into **rows at full size**. It
-used to have exactly one strategy — shrink the type until the line fitted on one
-row — so a 50-character line came out in type you could read from across a room,
-and short lines came out stacked. The renderer was picking whichever shape the
-measurement allowed instead of the one the lyric wanted.
+`--wrap rows` breaks a long line into **rows at full size**. Wrapping happens
+**first**; shrinking only if the rows still overflow. Rows are **balanced**, not
+greedy, and a boundary is **always a space** — see `check_wrap.mjs`.
 
-Wrapping happens **first**; shrinking only if the rows still overflow the frame.
-Rows are **balanced**, not greedy: greedy fills row one to the brim and strands
-two words on the last, which reads as a mistake rather than as composition. A
-boundary is **always a space** — see `check_wrap.mjs`.
+**TWO HARD RULES, both learned the expensive way.**
 
-`--x-pos` varies **where** each line sits horizontally, per cue. This is separate
-from `--mode mix`, which chooses the band *shape* in blocks of `--mix-block`
-cues: changing the shape every cue reads as a flicker at ~1.4 s per line, but
-moving a settled block of text sideways reads as variety, and it is what removes
-the persistent left bias without touching the composition.
+**The row count is decided at the FULL requested size, never at the fitted one.**
+It used to scale the wrap budget by the ratio of the size that was finally chosen to
+the size that was asked for, which is a feedback loop with positive gain: shrink the
+type, measure a narrower band in em, fit fewer words per row, make the block taller,
+shrink further. It produced **8px type at 3:00** across twelve rows.
+
+**The shrink has a hard floor: `MIN_FRACTION = 0.78` of the house size.** A line
+that will not fit at 82px is a wrapping problem, not a sizing one. "Don't lower the
+font size too low" is a standing instruction and this is where it is enforced.
+
+`LINE_HEIGHT` is **1.55**, and it is **one constant**. It was the literal `1.32` in
+five places, two of which decide whether a line may be the size it asked for — so a
+disagreement between the copies looks like random shrinkage rather than a layout
+bug. 1.32 was shorter than the faces are tall (1.6–1.8em from an above-matra down to
+a ु), so glyphs overflowed their own line box and the crop landed on the descender:
+"the last छु word is cut to the bottom". `paddingBottom: 0.22em` under the last row
+is the margin of safety for a taller face.
 
 ### The three sizes, and why `medium` is the default
 
@@ -137,18 +171,85 @@ text. `--size-preset` is a preset, not an override — an explicit `--size`,
 
 ### Colour, and why the ranges are bounded
 
-`--color-mode calm|vivid|wild` paints a seeded colour **per word**, and from
-`vivid` up **per letter** as well. It takes **no frame time at all** — a word's
-colour is drawn from the seed and stays — so colour cannot put a word on screen
-after its line ended. The hue *steps* across a word rather than scattering, so a
-conjunct stays one coloured object.
+**The unit is the SYLLABLE, not the word and not the sentence.** Three attempts in
+one session, in order, and each was wrong for a reason worth recording:
 
-The ranges are bounded on purpose. This deliverable is blended Add/Screen over a
-camera feed, so it is judged as light added to a picture: a dark word adds
-nothing and is simply absent from the composite, and full-spectrum saturation
-fights the footage. Each level floors its own lightness, and
-`scripts/check_color.mjs` asserts that floor for every word and every letter.
-See **src/color.js** for the numbers.
+1. **per word, at accent 1.0** — "too colourful, don't use colours everywhere". A
+   coloured word in a one-syllable lyric is a coloured *line*, and a line of those is
+   a video that is coloured all the way through.
+2. **per word, at accent 0.12** — one word in eight picked out. Better, but the
+   request was "per **letter**… 2 3 letters only".
+3. **`syllableAccent()`** — what ships. About one word in eight is accented, and
+   within it a **run of two or three consecutive syllables**. A *run* and not a
+   scatter, because a syllable is the unit the shirorekha is drawn across: two
+   non-adjacent syllables in one word puts two colours inside one headline, which is
+   the gotcha-8 damage in colour form.
+
+`--color-mode vivid` and above step the hue **across** a word, letter by letter.
+That is the "fading" that was rejected by name, so the house style is `calm`.
+
+**A NAMED PALETTE IS EXACT, and a generated one is not.** `NAMED_PALETTES` holds
+real hex values — `reds` (the twenty from a reference), `materials` (those plus
+thirteen metals and earths), and `warm`, the shipped one: gold, yellow, amber,
+orange, orange-red, vermilion, red, coral red, crimson, carmine. "Mahogany" is
+`#420D09` and not "a dark red near hue 0".
+
+**THE FLOOR IS A GUARD AGAINST A VANISHING COLOUR, NOT A TARGET.** This is the
+most-repeated mistake in the file's history, and the number moved 40 → 158 → 115 →
+0.20 (51/255) as it became clear the accent was solving lightness *from* it. A
+saturated hue cannot be brightened by scaling: red is already 255 in its own channel
+and carries only 0.2126 of the luminance budget, so the only lever is
+desaturation. Chasing a bright red is what produced `rgb(255,132,132)` — rejected as
+"fading colours" — and then `rgb(255,77,77)`, rejected as "not vibrant red". The
+accent now states a **saturation and a lightness directly**; the floor only rejects a
+colour that would disappear.
+
+Seven of the twenty named reds measure below luma 51 — mahogany at 24, maroon at 27.
+They are **lifted to the floor** by `ensureReadable()`, which raises lightness while
+holding hue and saturation, and the lifts are **enumerated by the check** rather than
+hidden. Dropping them would have honoured the names and lost the words.
+
+Colour takes **no frame time at all**, so it cannot put a word on screen after its
+line ended. `scripts/check_color.mjs` asserts the floor for every word **and every
+letter** — it walked words only for most of its life, and a `wild` letter at hue 210
+was sitting at luma 145 while its own word was at 160.
+
+`scripts/colour_words.py` measures the real thing: it segments a frame on column gaps
+and counts hues per word. **It reported an all-white line as "the fault" once** —
+white is the goal — and flagged "one accent among whites", which is the design. A
+fault is every word carrying the same chroma with no white anywhere.
+
+### The title-word highlight
+
+When a word of the song's own title appears in a lyric line, that word is marked —
+colour, a glow, and a size bump — **every time it appears**. `--title-word` sets
+what it matches on; otherwise the `.lrc`'s `[ti:]` tag is used.
+
+**Exact whole-word match, never substring.** The lyric contains `तिमीलाई` and the
+Timilai title is `तिमीलाई भुलेको`; a substring test would mark every `तिमीलाई` in
+the song, which is a word that merely appears in the title rather than the title.
+Punctuation is stripped from both sides first, because the title carries a comma the
+lyric does not — and without stripping the feature matches nothing and looks like
+nobody implemented it.
+
+**The glow is a `textShadow`, with no filter and no transform**, and
+`check_title.mjs` asserts both absences. Every bug this project lost a day to was a
+per-*syllable* transform detaching a matra; an effect that only adds **paint** cannot
+reintroduce it. The one geometric property set is a per-**word** font-size, which is
+safe because a word is a single span.
+
+**The report is on every run and it fails loudly.** A matcher that finds nothing looks
+exactly like a feature nobody implemented, which is worse than a crash:
+
+```
+title  : अल्लारे
+         fires on 1 word(s) across 1 of 109 cues
+```
+
+or the warning, with the exact flag to add. **Watch for the warning** — three of the
+seven songs have an English `.lrc` title over a Nepali lyric (Jam Na Maya, Kali Kali,
+Wora Para) and need `--title-word` from a human. `scripts/title_probe.mjs` answers it
+for a whole folder tree without rendering.
 
 ### `--cut` and `--type`, and what each is allowed to touch
 
@@ -162,15 +263,39 @@ relative to its neighbours snaps the headline (gotcha 8):
 
 - **word level** may rotate, lift, scale and tear freely — the bar already breaks
   at word boundaries
-- **letter level** may take colour and a *bounded* rotation (`LETTER_ANGLE_CAP`,
-  deliberately conservative, not yet measured against pixels)
-- **letter level may not lift or clip at all.** Not capped — refused. There is no
-  safe amount of either, and `check_cut.mjs` asserts their absence so a future
-  change cannot quietly add them.
+- **letter level** may take colour and a *bounded* rotation (`LETTER_ANGLE_CAP`)
+- **letter level may not lift or clip at all.** Not capped — refused.
 
-`--type` is the one effect that must finish inside the cue's end, because it is
-nothing but letters arriving late. Its chain is fitted to the span and compresses
-rather than overrunning, like `--depth`'s sequenced reveal.
+**`--cut`'s tear bar is sized from the font's own measured ink room.** The bar sits
+at `bottom: 0` of the word box, so the only space it may occupy is between the glyph
+**ink** and the box's lower edge, and that is `descent − inkBottom` for whatever face
+is in use. It varies **79×** across this batch's fonts (0.006em Himalayabold to
+0.474em MKali), so a constant `0.34em` bar put a bright `rgba(255,255,255,0.85)` edge
+**across the bottom of every letter in ten of the eleven**. `scripts/metrics_probe.py
+--write` measures the room and caches it in `width.json`; `check_cut.mjs` asserts the
+bar never reaches the ink.
+
+**`--type letter` is OFF in the delivered files, and that is a correctness
+decision.** The reveal clips each syllable with `inset(0 X% 0 0)`, so **mid-reveal a
+syllable is half-drawn** — and a half-drawn Devanagari syllable is a *different
+letter*. On a white word that is a soft entrance. On **the one word in the line that
+is coloured**, it is glaring, because that is the word the eye goes to. That was
+reported as "the red word makes the sentence incorrect" and as "some issue with jam
+na maya", and the honest cost of turning it on is a legible word.
+
+### Per-letter size, and a cap that was hiding it
+
+`--letter-var` asks for per-letter size. **`LETTER_SIZE_CAP` in `src/letters.js`
+clamps it**, and for most of its life that cap was 0.03 — so `--letter-var 0.07`,
+`0.12`, `0.18` and `0.25` all produced **byte-identical** output, and the feature
+looked like it did not exist. A cap that is not mentioned at the call site is a
+feature that has been switched off without saying so.
+
+The cap is now **0.12**, and the house style asks for all of it. **The trade, stated
+plainly:** at 0.12 a syllable can be 112% beside one at 88%, which puts a visible
+notch in the shirorekha — the table in `letters.js` calls 0.12 "badly broken". It is
+wanted, so it is asked for; **0.06** is the value to drop to if the stepping reads as
+damage. The trade is a number that can be changed, not a ceiling that cannot.
 
 ## Map of the repo
 
@@ -179,7 +304,7 @@ rather than overrunning, like `--depth`'s sequenced reveal.
 | understand the pipeline / what fails it | [docs/PIPELINE.md](docs/PIPELINE.md) |
 | animate text — every layer and value | [docs/ANIMATION.md](docs/ANIMATION.md) |
 | pick a font that is **proven** on this song | `..\nepali-legacy-fonts\verdicts.json` — **the font repo owns this.** This repo holds no font facts and must never grow a copy; read it through `scripts/font_ref.mjs` |
-| know what went wrong here, 37 times | [docs/GOTCHAS.md](docs/GOTCHAS.md) |
+| know what went wrong here, 47 times | [docs/GOTCHAS.md](docs/GOTCHAS.md) |
 | match the reference video's look | [docs/REFERENCE.md](docs/REFERENCE.md) |
 | build the ṚITU full-frame piece | [docs/RITU.md](docs/RITU.md) — the design, the lyric analysis, and the locked settings |
 | why Remotion, and its traps | [docs/PLAYBOOK.md](docs/PLAYBOOK.md) |
@@ -234,7 +359,7 @@ node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 There are **28** check scripts, in three kinds. Only the first kind must be
 green before you commit, and `check_all.mjs` runs all of it:
 
-**1. Self-contained suites (21 + smoke)** — pure functions of the source; no render, no
+**1. Self-contained suites (22 + smoke)** — pure functions of the source; no render, no
 font, no audio. Seconds each, and every one has caught a real bug here.
 
 | | guards |
@@ -255,7 +380,7 @@ font, no audio. Seconds each, and every one has caught a real bug here.
 | `check_parse.mjs` | the `.lrc` + `.ends.txt` parse |
 | `check_beats.mjs` | beat anchoring and the "untrusted grid is refused" rule |
 | `check_pairing.mjs` | the `.lrc` and ends file must find each other by name |
-| `check_letters.mjs` | grapheme splitting, letter sizing on real lyric text |
+| `check_letters.mjs` | grapheme splitting, letter sizing on real lyric text, and that `LETTER_SIZE_CAP` clamps rather than silently swallows a value |
 | `check_mix.mjs` | the mix-mode placement plan, and the arithmetic covering every cue |
 | `check_width_model.mjs` | the width model, its classifier, its coefficients |
 | `check_word_timing.mjs` | derived word timings against a real song's cues |
@@ -271,6 +396,28 @@ title/band) and `check_timing.mjs` (opener timings worked out from the song).
 **font repo** with the fonts it checks, and is named here only so the count adds
 up and the split is visible. Two more live in the pipeline instead:
 `critique.py` and `scan_visibility.py` are stages 3 and 4, run on every render.
+
+## The measuring instruments, and why they exist
+
+Every one of these was written because a claim was being made from reading the
+source instead of from the pixels, and the claim was wrong.
+
+| | what it measures | the mistake it caught |
+|---|---|---|
+| `scripts/colour_words.py` | distinct hues **per word**, by segmenting a frame on column gaps | "whole lines came out white" — the unit was the word, so a coloured word in a one-syllable lyric was a coloured line. Also caught itself calling an all-white line "the fault" |
+| `scripts/band_report.py` | every sampled cue against **both** frame edges | 3:09 reached 94% of the frame after the band had been raised. "Is it centred" would have passed it |
+| `scripts/title_probe.mjs` | title-word matches for a whole folder tree, no render | three songs have an English `.lrc` title over a Nepali lyric and need `--title-word` |
+| `scripts/metrics_probe.py --write` | each font's ink room below the baseline | the tear bar was drawing a bright edge through the bottom of every letter in **10 of 11** fonts |
+| `scripts/matra_probe.py` | the ink a string needs vs what a frame shows | whether a missing matra is a font defect or a crop. It is neither here: it is `LINE_HEIGHT` |
+| `scripts/bbox_report.py` | a frame's ink box against the frame edges | distinguishing "text touching the edge" from "text clipped" |
+| `scripts/probe_words.mjs`, `probe_typing.mjs`, `interval_math.mjs` | how long a word is on screen, whether a letter lands late, whether a low interval count is arithmetic | the gate's blind spots, per `AGENTS.md` |
+
+**Two of these have misled me and are labelled accordingly.** `type_size.py` counts
+empty rows to find row breaks, and `--scanlines` puts ink in every row, so it reported
+1080px rows; it also samples single frames, and with `--motion` a frame mid-entrance is
+scaled down. It said 8px where the picture shows readable type. **When the instrument
+and the picture disagree, the picture wins** — and the right response is to fix the
+instrument, not to believe it.
 
 If you add a check, **prove it fails on a known-bad input first** — that is the
 habit that keeps them worth running, and `check_doc_refs.mjs` will now tell you

@@ -118,8 +118,39 @@ A detector that never fails is not a detector.
 | `--motion <level>` | `off` | off by default *deliberately* — motion displaces text (gotcha 33) |
 | `--font-file` / `--font-slug` / `--legacy-font` | — | risk order in [FONTS-VERIFIED.md](FONTS-VERIFIED.md). Prefer `--font-file` |
 | `--beats <file>` / `--no-beats` / `--bpm <n>` | beats on | an untrusted grid is refused automatically |
+| `--title-word <w>` | the `.lrc`'s `[ti:]` | comma-separated for a two-word title: `--title-word "जाम,माया"`. See below |
 | `--skip-critique` / `--skip-scan` | off | independent: critique is "is the file well-formed", the scan is "is any lyric outside its window" |
 | `--preview` | off | quarter-size look check. **Not the deliverable** |
+
+## `--title-word`, and the warning that means someone has to answer
+
+The title-word highlight is supposed to be automatic. It reads the `.lrc`'s `[ti:]`
+tag, and **three of the seven delivered songs have an English title over a Nepali
+lyric** — `Jaam na Maya`, `Kali Kali`, `Wora Para` — so the matcher finds nothing.
+
+That is why `render.mjs` prints a loud warning rather than staying quiet:
+
+```
+title  : Jaam na Maya
+         WARNING: that title word is in NO cue. The highlight will
+         --title-word "<the word as it appears in the lyric>"
+```
+
+**A feature that silently matches nothing looks exactly like a feature nobody
+implemented, which is worse than a crash** — you cannot tell from the video whether
+it is off, broken, or waiting on a word. So the report fires on every run and the
+warning names the flag.
+
+`scripts/title_probe.mjs` answers this for a whole folder tree without rendering
+anything, and `scripts/check_title.mjs` asserts the matcher fires on the title and
+on **nothing else**.
+
+**The report reads `parsed.cues` directly, not `props.cues`.** `Root.jsx` fills
+`props.cues` at *render* time, so at report time it is empty — which made the
+report say "in NO cue" about `अल्लारे`, a title word that fires correctly at 2:56.
+The same bug made `props.title` print "(none found in the .lrc)". A report that
+reads the object the *renderer* will fill, rather than the one the *report* can
+see, will always be wrong in the same direction: it says a working thing is broken.
 
 ## Ordering rules this machine forces
 
@@ -138,3 +169,21 @@ A detector that never fails is not a detector.
    *has* the characters; nothing proves it draws the *right* one. Read a still.
 2. **Whether it looks good.** "Proven working" means it renders correct text —
    not that you like it. Both are worth checking; only one is automatable.
+3. **The Nepali spelling of a title.** Three songs' `.lrc` titles are English over
+   Nepali lyrics, so `--title-word` has to be supplied by someone who knows the
+   song. **No amount of checking can guess it**, and the warning on every run is the
+   prompt for it.
+
+## The delivered batch, and where it came from
+
+Seven videos in `H:\Lyric Video Making Folder\RENDERED\`, all rendered from
+`scripts/render_all.mjs` and all passing every gate. The font table there maps the
+seven songs onto **four Unicode faces** (`arya`, `kalam`, `yantramanav`,
+`rajdhani`); the Preeti fonts are excluded outright, because they carry **zero
+Devanagari cmap** and no script can prove a glyph *shape* is right, only that
+something was drawn.
+
+Read the flags out of that one file rather than from a doc, and watch for
+**duplicate flags in it**: a repeated flag is invisible in a diff and the last one
+wins at render time, which is how a batch once shipped a colour density nobody had
+approved.

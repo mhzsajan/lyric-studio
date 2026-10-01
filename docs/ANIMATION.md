@@ -110,7 +110,7 @@ swing freely and the letter pool may not.
 
 ```bash
 --letter-anim drop|tumble|glow-in|unfurl|blur-in|tilt|slide-left|slide-right|...
---letter-var 0..0.03      # per-letter SIZE, capped hard
+--letter-var 0..0.12      # per-letter SIZE, clamped by LETTER_SIZE_CAP
 ```
 
 Letters are **grapheme clusters**, not codepoints: `क्ष` is three codepoints
@@ -118,20 +118,38 @@ forming one glyph, and `नि` stores its pre-base matra *after* the consonant
 though it draws to the left. Splitting on codepoints mangles both.
 
 **The rule: a letter effect may touch opacity, translate, rotate, blur, clipPath
-and glow. It may not scale, and may not change size past 0.03.**
+and glow. It may not scale, and may not change size past `LETTER_SIZE_CAP`.**
 
 | `--letter-var` | what `हावा` looks like |
 |---|---|
 | `0` | one continuous bar (control) |
-| **`0.03`** | **bar continuous, letters differ subtly** — the cap |
-| `0.05` | bar starts to separate |
-| `0.08` | clearly broken, the word reads as *damaged* |
+| `0.03` | bar continuous, letters differ subtly |
+| `0.06` | a visible step; the bar notches but stays legible |
+| **`0.12`** | **the cap — a syllable can be 112% beside one at 88%, and the notch is obvious** |
 
-> **`pop` is the one exception, and it is per-letter scale.** It is the shipped
-> house style and matches the reference video, so it is not changed — but by the
-> measurement above it does step the headline. If the typesetting matters more
-> than the impact, use `--letter-var` instead of `--letter-anim pop`.
-> `check_animation.mjs` reports this rather than silently allowing it.
+### `LETTER_SIZE_CAP` was 0.03, and it silently deleted the feature
+
+`src/letters.js` clamps `--letter-var` to `LETTER_SIZE_CAP`. That cap was **0.03**
+for most of the file's life, so `--letter-var 0.07`, `0.12`, `0.18` and `0.25` all
+produced **byte-identical output**. The flag was documented, wired, checked, and
+did nothing at any value a user would actually try — and it looked exactly like a
+feature nobody implemented, which is the failure mode that is hardest to notice.
+
+**A cap that is not mentioned at the call site is a feature that has been switched
+off without saying so.** The cap is now **0.12** and the house style asks for all
+of it, so the per-letter size difference is finally visible — which was the ask:
+"per letter size, must be visible".
+
+**The trade, stated plainly, because the table above is the argument against it.**
+At 0.12 the shirorekha takes a visible notch, and the own table in `letters.js`
+calls 0.12 "badly broken". It is wanted, so it is asked for. **0.06 is the number
+to drop to** if the stepping reads as damage rather than as character. That is a
+value that can be changed, not a ceiling that cannot.
+
+Per-word `size` has the same shape and its own floor: **`MIN_FRACTION = 0.78`** of
+the house size. `size` is a *floor*, not a peak, so a word may be 78% of 105px and
+never less. "Never shrink the type too low" is a standing instruction and this is
+where it is enforced.
 
 ## 5. Sizing
 
@@ -213,12 +231,35 @@ shirorekha. That is a real limitation, stated rather than hidden.
 ```bash
 --color-mode off|calm|vivid|wild    # default off
 --color-hue 0..359                 # palette anchor, default 210 (cool blue)
+--color-accent 0..1                # how much of a line is coloured at all
 ```
 
 `calm` paints each **word**; `vivid` and `wild` paint each **letter** as well,
 stepping the hue across the word so a conjunct stays one coloured object rather
 than two clashing dots. The glow is tinted to the word's own colour, because a
 white halo around a coloured word reads as a printing misregistration.
+
+**But the unit the deliverable actually uses is the SYLLABLE, and `--color-accent`
+is what makes white the default rather than the exception.** Three settings, in the
+order they were tried:
+
+| | `--color-accent` | what came out | verdict |
+|---|---|---|---|
+| 1 | `1.0` | every word coloured | "too colourful, don't use colours everywhere" |
+| 2 | `0.12` | ~1 word in 8 coloured, the **whole word** | better, but the ask was "per letter… 2 3 letters only" |
+| 3 | `0.12` | ~1 word in 8, and within it a **run of 2–3 syllables** | **ships** |
+
+A coloured word in a one-syllable lyric is a coloured *line*, and a line of those
+is a video that is coloured all the way through — which is what setting 1 was.
+`syllableAccent()` in `src/color.js` does setting 3, and it accents a **run** of
+consecutive syllables rather than a scatter, because a syllable is the unit the
+shirorekha is drawn across: two non-adjacent syllables inside one word put two
+colours inside one headline, which is gotcha 8 in colour form. It returns `null` for
+a white syllable so the caller leaves the style key off entirely and the word
+inherits the line's colour.
+
+`vivid` and above step hue **across** a word, letter by letter. That is the
+"fading" that was rejected by name, so the house style is `calm`.
 
 ### Why the ranges are bounded, and this is the whole design
 
@@ -237,11 +278,54 @@ a picture*. Two rules follow, and both rule out "random RGB per letter":
 
 A wider range is not bolder. It is a file that does not composite.
 
-| level | hue span | saturation | lightness floor | per letter |
+| level | hue span | saturation | lightness band | per letter |
 |---|---|---|---|---|
-| `calm` | ±18° | 0.10–0.34 | 0.87 | no |
-| `vivid` | ±62° | 0.38–0.70 | 0.80 | yes, 8–18°/letter |
-| `wild` | ±180° | 0.55–0.95 | 0.73 | yes, 22–48°/letter |
+| `calm` | ±18° | 0.10–0.34 | 0.87–0.98 | no |
+| `vivid` | ±62° | 0.38–0.70 | 0.80–0.95 | yes, 8–18°/letter |
+| `wild` | ±180° | 0.55–0.95 | 0.73–0.93 | yes, 22–48°/letter |
+
+`duo` is not on that ladder — it has its own `DUO_CHROMA` band, and it is
+**narrow on purpose**: sat 0.90–1.0, light **0.48–0.54**. A wide band is what makes
+one word in a line paler than its neighbour, which is legal in isolation and a
+visible fade in a row.
+
+### `LUMA_FLOOR` is a GUARD, not a target — and it is hue-aware
+
+`LUMA_FLOOR = 0.20` (51/255). The number moved **40 → 158 → 115 → 0.20** and the
+reason it had to move is the single most instructive thing in this file.
+
+**A saturated hue cannot be brightened by scaling.** Red is already 255 in its own
+channel and carries only 0.2126 of the luminance budget, so the only lever left is
+*desaturation* — which is what "fading colours" is. Chasing a bright red took the
+value through `rgb(255,132,132)` (rejected: "fading colours") and then
+`rgb(255,77,77)` (rejected: "not vibrant red"). Both attempts were **solving
+lightness from a luminance target**, and that solving is what desaturated the red.
+
+So the accent now states a **saturation and a lightness directly**, and the floor's
+only job is to reject a colour that would **disappear**.
+
+**`luma()` must be hue-aware, and was not.** Pure red is luma 54, pure blue is 38,
+pure blue-violet is 18 — blue carries 0.0722 of the luminance against red's 0.2126,
+so identical HSL differs by 7× in brightness. The old `luma()` reported one number
+for all three, which meant the `LUMA_FLOOR` assertion in `check_color.mjs` was
+**measuring pure red's brightness while looking at a blue swatch** — it cleared
+invisible colours, and `--color-hue 210`, the house style's own value, produced
+words ~40% darker than the check believed. A green tick on unreadable words is the
+rule-2 failure in its purest form.
+
+`ensureReadable()` applies the floor to **every** colour the file emits, raising
+lightness while holding hue and saturation. Seven of the twenty named reds measure
+below 51 — mahogany at 24, maroon at 27 — and they are **lifted**, with the lifts
+enumerated by `check_color.mjs` rather than hidden. Dropping them would have
+honoured the names and lost the words.
+
+`lightForLuma()` returns `hi`, not `(lo+hi)/2`, from its bisection: the loop
+maintains `luma(lo) < want ≤ luma(hi)`, so `hi` is the only value guaranteed to
+**meet** the target. The midpoint returned a hair under often enough that every dark
+hue in a batch came out at 158/255 against a floor of 0.62 (=158.1) and the floor
+assertion failed **on its own output** by three hundredths of a level. A solver that
+returns less than the number it was asked for will eventually be blamed for the
+caller's arithmetic.
 
 ### Why colour takes no frame time
 
@@ -266,12 +350,38 @@ as noise rather than as a palette.
 | `split` | the anchor and two hues 150°/210° away |
 | `complement` | the anchor and its opposite, alternating |
 | `rainbow` | no relationship — the pre-scheme behaviour |
+| `duo:N` | anchor **and** `hue+180-N`, given as a numeric parameter |
 
 Hues are dealt as a seeded **permutation**, not `slot = wordIndex % slots.length`.
 The modulo version puts words 1 and 4 on the same hue in a four-word line, so the
 line reads a-b-a-b; a permutation gives every neighbouring pair a different
 colour. `rainbow` is kept rather than deleted because it reproduces a look you
 have already seen.
+
+### Named palettes — `warm`, `reds`, `materials`
+
+**A named palette is EXACT, and a generated one is not.** These are real hex
+values, not hues reconstructed from an anchor:
+
+| palette | n | what it is |
+|---|---|---|
+| `warm` | 10 | **the shipped one.** GOLD `#FFC300`, YELLOW `#FFD400`, AMBER `#FFB000`, ORANGE `#FF8A00`, ORANGE RED `#FF5A00`, VERMILION `#FF3B00`, RED `#F01A00`, CORAL RED `#E0305A`, CRIMSON `#DC143C`, CARMINE `#B00040` |
+| `reds` | 20 | the twenty reds from a supplied reference |
+| `materials` | 33 | `reds` plus thirteen metals and earths |
+
+`reds` is kept as its own palette rather than folded into `materials`, because a
+user who asked for twenty specific names should be able to return to **exactly
+those twenty** with one flag.
+
+The reason this exists at all: "mahogany" is `#420D09`, and reconstructing that as
+"a dark red near hue 0" is a different colour that happens to sort near the same
+place. Names are data.
+
+`warm` is a **ramp**, not a scatter — ten steps that run gold → yellow → amber →
+orange → orange-red → vermilion → red → coral red → crimson → carmine. Ordered, it
+reads as one heat. Shuffled at random, it reads as a bag of swatches, which is why
+the palette is kept in ramp order and dealt by permutation rather than sampled
+blindly.
 
 ### `--color-gradient` — a gradient across a phrase line
 
@@ -301,13 +411,32 @@ irregular.
 | letter colour, letter rotation | ✅ / ⚠️ | colour is safe; rotation displaces the bar |
 | letter lift, letter clip | ❌ | **not offered** — both cut the bar, and there is no safe amount |
 
-### The one number in it that is NOT measured
+### The tear bar is measured per font, and it used not to be
 
-`LETTER_ANGLE_CAP = 2.0°`. This is a deliberately conservative first estimate,
-and it is the one value here I would not trust without looking. To measure it:
-render one word at 2, 4, 6 and 10 degrees, crop the headline, and look at the
-boundary between each rotated letter and its neighbour. At 2° the step should be
-sub-pixel at 1080p. If it looks too timid, raise it.
+**The bar's height is `descent − inkBottom` for whatever face is in use**, not a
+constant. The bar sits at `bottom: 0` of the word box, so the only space it may
+occupy is between the glyph **ink** and the box's lower edge.
+
+That space varies **79×** across this batch's fonts: **0.006em** for Himalayabold,
+**0.474em** for MKali. The bar was a hardcoded `0.34em` with a
+`rgba(255,255,255,0.85)` top edge, which means for a 0.006em face it was roughly
+**fifty times taller than the room available** and it drew a bright horizontal edge
+straight **across the bottom of every letter in ten of the eleven fonts**. The
+report was "the bottom of the text is cut" — and it was, by the effect intended to
+decorate it.
+
+`scripts/metrics_probe.py --write` measures each font's room and caches it in
+`width.json`; `check_cut.mjs` asserts the bar never reaches the ink. **This is the
+reason a constant is suspect here in general:** a torn edge that clips is not a
+subtle effect, it is a defect that looks like one.
+
+### The one number in it that is still NOT measured
+
+`LETTER_ANGLE_CAP = 2.0°`. This is a deliberately conservative first estimate, and
+it is the one value here I would not trust without looking. To measure it: render
+one word at 2, 4, 6 and 10 degrees, crop the headline, and look at the boundary
+between each rotated letter and its neighbour. At 2° the step should be sub-pixel
+at 1080p. If it looks too timid, raise it.
 
 The torn edge is drawn on a **sibling element behind the text**, never as a
 `clip-path` on the word. That is not a style preference: `clip-path` removes ink,
@@ -335,6 +464,30 @@ would land on one frame and the effect would be gone while still costing risk.
 
 The shirorekha is not at risk: a letter that *appears* does not move. That is why
 this can run at full strength where per-letter size cannot.
+
+### But `--type letter` is OFF in the delivered files, and that is a correctness call
+
+The fitting above guarantees the chain finishes in time. It does **not** remove the
+reveal, and the reveal is the problem: a syllable is revealed by clipping it with
+`inset(0 X% 0 0)`, so **mid-reveal a syllable is half-drawn** — and a half-drawn
+Devanagari syllable is a *different letter*.
+
+On a white word that is a soft entrance and nobody mentions it. On **the one word
+in the line that is coloured** it is glaring, because that is the word the eye goes
+to: the report was "the red word makes the sentence incorrect", and then, on the
+accented frame of Jam Na Maya, "some issue with jam na maya".
+
+So `--type` is off in the delivered batch, and the honest cost is on the record:
+**you lose the typed-on reveal.** The other motion layers are untouched — depth,
+`--motion`, word and letter animation all still run, so the line still moves. Given
+a choice between an effect and a letter that reads as a different letter, the letter
+wins. It is a flag; `--type letter` restores it in one place.
+
+Worth separating two things that were confused here: "the word was still arriving
+past the end of its cue" is a **timing** fault and the chain fitting fixes it.
+"the word was half-drawn *during* its cue" is a **legibility** fault and no amount
+of fitting touches it. Both reports arrived as "the text breaks the meaning of the
+letter", which is why it is written down as two.
 
 ---
 
@@ -377,12 +530,19 @@ words — a scanline that rotated with the text would be a scanline no longer.
 
 ```powershell
 node scripts\only_line.mjs "G:\Lyrical Video\Kali Kali" 26 `
-  --loudest --color-mode wild --cut word --type letter
+  --loudest --color-scheme warm --color-accent 0.12 --cut word
 ```
 
 Renders **one line**, full frame size, with every flag the real render would use.
 A quarter-resolution preview is worse than none: it changes how a glow reads and
 how a 2° letter rotation reads, which are exactly the things being judged.
+
+**Judge with the house flags, not with the loudest ones you can find.** The first
+version of that command here was `--color-mode wild --cut word --type letter`,
+which is three flags the delivered batch does not use — `vivid`+ for the
+"fading", `--type letter` for the half-drawn syllable (§9). A preview built from
+flags the real render does not use will disagree with the real render, and you
+will spend the afternoon fixing the preview.
 
 `--presentation r-word` (the default) **pins the layout**, and the tool prints it.
 That is a correctness fix, not a convenience: the preview writes a one-cue `.lrc`,
@@ -394,55 +554,87 @@ preview would teach you that a working feature is broken.
 
 ## The house style
 
-```powershell
---loudest
-```
-
-That is now the short answer. It sets every layer at once — `--depth wild`,
-`--motion wild`, `--word-anim mix`, `--letter-anim pop` at 0.03, `--size-mode
-word`, `--mode mix` (block 8), `--color-mode wild` at 210°, size 105 — and
-**every one of them yields to an explicit flag**. `--loudest --size 90` is the
-full treatment at a smaller size, not a fight between two settings.
-
-Spelled out, the house style is:
+This is what the seven delivered videos were rendered with. It is
+`scripts/render_all.mjs` verbatim — and note that it is **not** `--loudest` alone.
+`--loudest` sets the motion layers; the delivered look overrides four of them.
 
 ```powershell
---motion wild --word-anim mix --letter-anim pop --letter-var 0.03 `
---mode mix --mix-block 8 --size-mode word --size-preset medium `
---depth wild --color-mode wild --color-hue 210 --color-scheme analogous
+--loudest            # depth, motion, word+letter anim, size, mix placement
+--size-preset medium # 105 / 0.08 / 0.05  <- the house size
+--letter-var 0.12    # the full cap, so per-letter size is actually visible
+--color-scheme warm  # the ten-step warm ramp
+--color-hue 0
+--color-accent 0.12  # ~1 word in 8 coloured; the rest stay WHITE
+--color-mode calm    # per word. vivid+ steps hue ACROSS a word = "fading"
+--cut word           # the newspaper look, every word a clipping
+--wrap rows          # long lines become rows at full size, not one shrunken row
+--mode mix --mix-block 8
+--scanlines 40 --scanline-alpha 0.06
+--shadow "0 3px 16px rgba(0,0,0,0.85)"
 ```
 
-Louder still — the cut-paper look:
+Three flags the house style deliberately does **not** set:
 
-```powershell
---loudest --cut word --type letter --color-mode wild --color-scheme split
-```
+| | why not |
+|---|---|
+| `--type letter` | half-drawn syllables read as different letters — see §9 |
+| `--x-pos` | moved a settled line sideways between cues; with the motion layers on it read as jitter, not variety |
+| `--color-mode vivid`+ | steps hue across a word, which is the "fading" that was rejected |
 
-Louder still, if you want it:
+**Every one of `--loudest`'s layers yields to an explicit flag.** `--loudest --size
+90` is the full treatment at a smaller size, not a fight between two settings.
 
-```powershell
---loudest --size-preset large --letter-anim tumble --size-var 0.22 --size-drift 0.18
-```
+### Where the text sits, and why
+
+**Upper-mid, 30/40/50 of frame height** — a delivery constraint, not a composition
+one. The material plays on a stage screen that sits **high**, so the bottom of the
+frame is where the audience cannot see and the top is lost to whatever is above the
+screen. The usable area is a **band**, not an edge.
+
+Three things enforce it, and all three exist because one alone did not work:
+
+| | what it does | why it was not enough alone |
+|---|---|---|
+| `geometry()` 30/40/50 | where a block **begins** | a block grows *downward*, so a many-row line walks straight back out of the band |
+| `MAX_BOTTOM = 0.72` | caps where a block may **end** | without it, one cue reached **94% of the frame** |
+| `SIDE_SAFE_VW = 4` | 4vw clear on **both** sides | a band's `left` may be 0vw, and at 1:53 the ink began at exactly x=0 |
+
+`scripts/band_report.py` checks sampled cues against both edges. "Is it centred"
+would pass a block hanging off the bottom of the visible area.
 
 ## Verify before shipping
 
 ```powershell
-node scripts\check_all.mjs          # every fast suite, 15 of them
+node scripts\check_all.mjs          # every fast suite -- 23 of them
 node scripts\check_motion.mjs        # deck, no repeats, ends, no first-frame pop
 node scripts\check_animation.mjs     # pools, the shirorekha rule, drift bounds
 node scripts\check_depth.mjs         # sequence fits the span; tracking is a gap
-node scripts\check_color.mjs         # the lightness floor, and a broken impl
-node scripts\check_cut.mjs           # the angle cap; no letter lift or clip
+node scripts\check_color.mjs         # the luma floor, hue-aware, and a broken impl
+node scripts\check_cut.mjs           # the angle cap; the bar never reaches the ink
 node scripts\check_typing.mjs        # the typing chain fits every cue span
+node scripts\check_title.mjs         # the title word fires on the title and NOTHING else
+node scripts\check_smoke.mjs         # renders a real frame -- catches a missing binding
 py   scripts\scan_visibility.py out\<song>.mp4 <song>.lrc <song>.ends.txt
 ```
 
 The last one is the one that answers *"is any word visible after it should have
 ended"*, by decoding every frame rather than sampling.
 
-`check_color.mjs` is the one to read before trusting: it runs its own assertions
-against a deliberately broken implementation and requires them to fail. A colour
-check that passes while the video is broken is exactly its own failure mode.
+Two of these are worth reading before trusting them, because each runs its own
+assertions against a deliberately broken implementation and requires them to fail:
+
+- **`check_color.mjs`** — a colour check that passes while the video is broken is
+  exactly its own failure mode.
+- **`check_title.mjs`** — the assertion with value is that the highlight fires on
+  the title and on **nothing else**. A substring match would light up every word
+  that merely *contains* the title word, and that is the bug that looks like a
+  feature working.
+
+`check_smoke.mjs` exists because of a class no other suite can see: **a prop
+accepted on a composition but never passed to the function that reads it**.
+`cutRoom` and `typeLag` were both destructured and both used, neither passed, and
+the module *parsed* — all 22 other suites stayed green and Remotion reported a bare
+frame number with no file and no stack. One of them cost five renders.
 
 ## One more thing before you judge motion
 
