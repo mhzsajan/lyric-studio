@@ -34,6 +34,7 @@ import { readFileSync } from "node:fs";
 import {
   wordColor, letterColor, levelHasLetterColor, levelTintsGlow, hslRgbTriple,
   hslCss, gradientCss, linePalette, slotHsl, isWhiteSlot, luma, LUMA_FLOOR,
+  lightForLuma, ensureReadable,
   COLOR_LEVELS, COLOR_SCHEMES,
 } from "../src/color.js";
 import { splitGraphemes } from "../src/letters.js";
@@ -462,9 +463,36 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
   // So: the floor is high, and the code RAISES lightness to meet it. The cost is
   // that a readable hue-0 red is a light red, and that is asserted below as an
   // explicit, visible trade rather than smuggled in as a dim word.
-  ok(LUMA_FLOOR >= 0.5,
-    "the floor is high enough that a coloured word is genuinely readable",
-    `${(LUMA_FLOOR * 255).toFixed(0)}/255, ${(LUMA_FLOOR * 100).toFixed(0)}% of white`);
+  // The floor's job is to EXCLUDE THE CATASTROPHIC CASE, not to maximise contrast.
+  //
+  // This assertion used to be `LUMA_FLOOR >= 0.5`, i.e. "as bright as possible
+  // without going white" -- and it is why the shipped red became rgb(255,132,132),
+  // a pale salmon the user rejected by name. A floor that high is not a readability
+  // floor, it is a saturation ceiling wearing one, and asserting it meant the
+  // palette was pinned to the palest legal colour forever.
+  //
+  // So it is asserted as the two things it actually has to guarantee:
+  //   1. comfortably clear of pure red's own luma of 54, which is the failure that
+  //      shipped (red words measured at 51, losing every thin stroke); and
+  //   2. still SATURATED -- the colour it produces at the floor must have its
+  //      dominant channel far above the other two, or "red" has become pink.
+  ok(LUMA_FLOOR * 255 > 90,
+    "the floor clears the failure it exists to prevent (pure red, luma 54)",
+    `${(LUMA_FLOOR * 255).toFixed(0)}/255, ${(LUMA_FLOOR / (54 / 255)).toFixed(1)}x pure red`);
+
+  {
+    // The colour the floor actually produces at hue 0, asserted on its rgb. A
+    // floor can be "high enough" and still deliver pink, which is precisely what
+    // 158 did.
+    const need = lightForLuma(0, 1.0, LUMA_FLOOR);
+    const q = need + 1.0 - need;
+    const p = 2 * need - q;
+    const rgb = [q, p, p].map((v) => Math.round(v * 255));
+    const dominant = rgb[0] - Math.max(rgb[1], rgb[2]);
+    ok(dominant >= 120,
+      "and the red it produces is still RED, not a pale wash",
+      `rgb(${rgb.join(",")}) at the floor, R over G/B by ${dominant}`);
+  }
 
   // The load-bearing one: the floor must hold for the DARK hues, not just red.
   // The old luma() reported the same number for every hue, so this passed no

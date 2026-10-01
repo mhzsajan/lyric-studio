@@ -170,11 +170,13 @@ const WHITE_SLOT = { sat: 0, light: 1 };
 // lightness and hoping for the best is therefore varying the one thing that
 // decides whether the word can be read.
 const DUO_CHROMA = {
-  sat: [0.82, 1.0],
-  // How far ABOVE the floor the accent's luminance may sit. Narrow on purpose: the
-  // point of the accent is to be one readable coloured word among white ones, not
-  // to be the brightest thing on screen.
-  lumaSpread: 0.10,
+  sat: [0.90, 1.0],
+  // How far ABOVE the floor the accent's luminance may sit. Narrow, because the
+  // complaint this answers is "don't make fading colors" -- a wide spread means one
+  // word in a line is noticeably paler than its neighbour, which reads as a fade
+  // even when every value is individually legal. 0.04 is about ten levels of 255,
+  // which is variation without a fade.
+  lumaSpread: 0.04,
 };
 
 /** hsl -> [r,g,b] each 0..1. The one conversion in this file; everything uses it. */
@@ -291,7 +293,42 @@ export function lightForLuma(hue, sat, target) {
 // rgb(255,149,149), which reads as coral. Anyone who needs a true primary red must
 // either accept a dim word or accept a pink one. There is no third option, and
 // pretending otherwise is what produced luma 51.
-export const LUMA_FLOOR = 0.62;
+// THE FLOOR, AND WHY IT IS 115 AND NOT 158
+// -----------------------------------------
+// This number has been 40 (the original bug), then 158, and now it is 115, and the
+// reason for the last move is that the 158 was solving a problem I had already
+// fixed by other means.
+//
+// The floor was raised to 158 because red words were rendering at luma 51 and
+// losing their thin strokes. But the mangled words turned out to be the
+// per-syllable transforms detaching the matras -- a different fault, with a
+// different fix. Once that was fixed the words were correct again, and 158 was
+// still in place, so "red" had become rgb(255,132,132): a pale salmon. The user
+// rejected it by name -- "red should be redish, don't make fading colors" -- and
+// they were right, because a floor that high is not a readability floor any more,
+// it is a saturation ceiling wearing one.
+//
+// What the floor has to do is EXCLUDE the catastrophic case, not maximise contrast.
+// Measured on the shipped files, the failure was luma 51 on pure black. At 115:
+//
+//     floor 102 -> rgb(255, 61, 61)     clearly red
+//     floor 115 -> rgb(255, 77, 77)     clearly red      <- chosen
+//     floor 128 -> rgb(255, 93, 93)     clearly red
+//     floor 158 -> rgb(255,132,132)     pale salmon      <- rejected
+//     pure red -> rgb(255,  0,  0)      luma 54, 21% of white -- the original bug
+//
+// 115 is red, and it is 45% of white, which is more than double the failure it
+// exists to prevent. Going lower buys more saturation and costs legibility on the
+// thinnest Devanagari strokes, and the whole point of this exercise is that the
+// word has to be RIGHT as well as red.
+//
+// THE CEILING IS FIXED BY ARITHMETIC, NOT BY TASTE
+// A saturated hue cannot be brightened by scaling: red already sits at 255 in its
+// own channel, and it carries only 0.2126 of the luminance budget. So the only
+// lever is desaturation, and that is why rgb(255,0,0) is luma 54 and always will
+// be. A hue-0 red at 115 is rgb(255,77,77) and there is no way to make it
+// redder at that brightness -- only darker, and dark is what broke it.
+export const LUMA_FLOOR = 0.45;
 
 /**
  * Raise `light` until the colour clears LUMA_FLOOR. Applied to EVERY colour this
