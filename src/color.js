@@ -71,7 +71,7 @@ export const COLOR_LEVELS = ["off", "calm", "vivid", "wild"];
 // reproduces what shipped first, so `--color-scheme rainbow` is how you go back
 // to a look you have already seen rather than guessing at it.
 export const COLOR_SCHEMES = [
-  "mono", "analogous", "triad", "split", "complement", "rainbow", "duo",
+  "mono", "analogous", "triad", "split", "complement", "rainbow", "duo", "primaries",
 ];
 
 // The hues each scheme may use, as OFFSETS from the anchor, in degrees. Read as
@@ -95,6 +95,13 @@ const SCHEME_OFFSETS = {
   // and white. WHICH words get the accent is dealt rather than fixed, so a line
   // is a mix of the two and not "all red, then all white".
   duo: [0, "W"],
+  // "primaries" is the request for red, orange, blue and a green tint, and it is
+  // NOT `triad`. Triad is [0, 120, 240] -- red, green, blue -- and it is missing
+  // the orange, which is the colour that sits between red and yellow and is the
+  // one that makes the set read as a palette rather than as three traffic lights.
+  // 25 degrees is the same warm step `duo:25` uses, so the orange here is
+  // identical to the orange there.
+  primaries: [0, 25, 120, 240],
   rainbow: null,   // null = the level's own hueSpan, no relationship imposed
 };
 
@@ -122,9 +129,23 @@ const SCHEME_OFFSETS = {
 // which is the exact failure this is meant to remove.
 const DUO_OFFSET = /^duo:(-?\d+(?:\.\d+)?)$/;
 
-/** Whether a scheme name is `duo` or `duo:<degrees>`. */
+/**
+ * Whether a scheme paints with the HIGH-CHROMA path -- saturated colour, with the
+ * lightness SOLVED from a target luminance so the result clears the readability
+ * floor.
+ *
+ * It is not a question of whether a scheme has two slots. It is a question of
+ * whether the scheme wants to be SATURATED, because the level's own ranges cannot
+ * deliver that: `calm` is sat 0.10-0.34 at light 0.96, which measures luma 244 and
+ * is white with a faint cast. So `primaries` -- four saturated hues -- has to take
+ * this path too, or "red, orange, blue and green" arrives as four pale tints.
+ *
+ * The name says duo because that is where it started; it is kept rather than
+ * renamed because it is exported and check_color.mjs asserts against it.
+ */
 export const isDuoScheme = (scheme) =>
-  typeof scheme === "string" && (scheme === "duo" || DUO_OFFSET.test(scheme));
+  typeof scheme === "string" &&
+  (scheme === "duo" || scheme === "primaries" || DUO_OFFSET.test(scheme));
 
 const slotsFor = (scheme) => {
   const m = typeof scheme === "string" && DUO_OFFSET.exec(scheme);

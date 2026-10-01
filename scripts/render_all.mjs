@@ -94,15 +94,27 @@ const FONTSET = {
 // the three-rung comparison: 105 / 0.08 / 0.05. Red and white only, duo at hue 0.
 const COMMON = [
   "--size-preset", "medium",
-  "--color-scheme", "duo",
+  // THE PALETTE: red, orange, blue and a green tint, dealt across the line so
+  // neighbouring words differ (linePalette is a seeded permutation, not a modulo,
+  // so words 1 and 4 never land on the same hue).
+  //
+  // `primaries` is [0, 25, 120, 240] -- red, orange, green, blue. It is not
+  // `triad`, which is [0, 120, 240] and has no orange in it; orange is the colour
+  // that makes the set read as a palette rather than as three traffic lights.
+  //
+  // `--color-accent 1` matters here and was 0.35 for the red-and-white duo.
+  // `primaries` has NO white slot, so the accent draw -- which converts a coloured
+  // slot to the white one -- would have turned 65% of every line white. At 1.0
+  // every word takes a colour from the set.
+  "--color-scheme", "primaries",
   "--color-hue", "0",
+  "--color-accent", "1",
   // HOW OFTEN a word takes the red. Measured over Kali Kali's 48 cues: at 1.0
   // exactly 50% of words are red, which is a COLOURED SENTENCE with white in it.
   // At 0.35 it is ~15% of words and about half the lines carry one accent -- so a
   // line is usually one word picked out, sometimes none, and never a block of
   // colour. Seeded per word, so the same words are accent words in both versions
   // of a song and on every re-render.
-  "--color-accent", "0.35",
   "--scanlines", "40",
   "--scanline-alpha", "0.06",
   "--shadow", "0 3px 16px rgba(0,0,0,0.85)",
