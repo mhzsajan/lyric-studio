@@ -1468,6 +1468,63 @@ async function run(audioPath, lrcPath) {
     props.xPos = false;
   }
 
+  // --title-word: WHAT THE TITLE-WORD HIGHLIGHT MATCHES ON, and what to do when the
+  // .lrc disagrees with the lyric.
+  //
+  // The feature reads the title from the .lrc's [ti:] tag, which is right when the
+  // two agree and useless when they do not: a song whose title is recorded in
+  // English, over a Nepali lyric, has a title word that appears nowhere in the
+  // text -- and a matcher that finds nothing looks EXACTLY like a feature nobody
+  // implemented. That is the failure this block exists to make impossible.
+  //
+  // So it is reported on every run, and it fails loudly:
+  //   - the title it is using, and where that came from
+  //   - how many cues actually contain one of its words
+  //   - the exact flag to add when that count is zero
+  // --title-word overrides the .lrc outright, comma separated for a two-word title.
+  {
+    const override = flag("--title-word") || "";
+    // The [ti:] tag is read from the .lrc HERE rather than from props, because
+    // props.title is not populated at this point in the run -- Root.jsx parses it
+    // later, from lyrics.generated.js. Reading it from the same file the cues came
+    // from is also the only way the report can be trusted: if this says the title is
+    // missing, the composition will agree, and if it says the title is present but
+    // matches nothing, that is a fact about the lyric rather than about plumbing.
+    let lrcTitle = String(props.title || "").trim();
+    if (!lrcTitle) {
+      try {
+        const raw = fs.readFileSync(lrcPath, "utf-8");
+        const m = /\[ti:([^\]]*)\]/i.exec(raw);
+        if (m) lrcTitle = m[1].trim();
+      } catch { /* the report must not fail over a nicety */ }
+    }
+    const words = (override || lrcTitle)
+      .split(",").map((s) => s.trim()).filter(Boolean);
+    props.titleWords = words;
+    const { titleWordFlags } = await import("./src/title.js");
+    let cuesWith = 0;
+    let hits = 0;
+    for (const c of (props.cues || [])) {
+      const n = titleWordFlags(c.text, words).filter(Boolean).length;
+      if (n) { cuesWith++; hits += n; }
+    }
+    console.log("  title  : " + (override
+      ? "--title-word " + words.join(", ")
+      : (lrcTitle || "(none found in the .lrc)")));
+    if (!words.length) {
+      console.log("           NO TITLE WORD -- the highlight is OFF. To turn it on:");
+      console.log("             --title-word \"<the word as it appears in the lyric>\"");
+    } else if (!cuesWith) {
+      console.log("           WARNING: that title word is in NO cue. The highlight will");
+      console.log("           never fire. The .lrc [ti:] tag and the lyric are probably");
+      console.log("           in different scripts. Re-run with:");
+      console.log("             --title-word \"<the word as it appears in the lyric>\"");
+    } else {
+      console.log("           fires on " + hits + " word(s) across " + cuesWith +
+        " of " + (props.cues || []).length + " cues");
+    }
+  }
+
   // --color-mode: per-word and per-letter COLOUR (src/color.js).
   //
   // Off by default, for the same reason --depth is: a colour nobody chose is a

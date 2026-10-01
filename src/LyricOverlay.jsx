@@ -7,6 +7,7 @@ import { wrapRows, rowStarts } from "./wrap.js";
 import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
+import { titleWordFlags, titleStyle } from "./title.js";
 // Per-word and per-letter COLOUR (src/color.js). Separate from the depth layers
 // because colour is not a transform and, unlike them, takes no frame time at all
 // -- it is assigned from a seed and stays, so it cannot put a word on screen
@@ -156,13 +157,40 @@ const legacyTextStyle = LEGACY_FONT_FAMILY ? { fontWeight: 400 } : {};
  * colorSpans does it: the line element is `white-space: pre-wrap` and a lyric
  * exported with deliberate spacing must not be re-flowed by `split(" ")`.
  */
-function wordSpans(text, seed, index, amount, mode, hue, scheme, accent) {
+function wordSpans(text, seed, index, amount, mode, hue, scheme, accent, titles) {
   const parts = String(text).split(/(\s+)/);
+  // Which words of this line ARE the song's title. Empty when no title is known, in
+  // which case every lookup below is a no-op and the line renders exactly as before.
+  const isTitle = titles ? titleWordFlags(text, titles) : [];
+  let ti = 0;
   let ordinal = 0;
   return parts.map((part, i) => {
     if (!part || /^\s+$/.test(part)) return part;
     const myOrdinal = ordinal++;
+    const flagged = isTitle[ti++] === true;
     const pct = (sizeFor(seed, index, amount, "w" + myOrdinal) * 100).toFixed(2) + "%";
+
+    // THE TITLE WORD OVERRIDES EVERYTHING, on purpose.
+    //
+    // It is the one word the audience is meant to be listening for, and it is
+    // marked EVERY time it appears -- so it cannot be left to the accent draw,
+    // which fires on about one word in eight and would skip the very word that
+    // matters. It also takes its colour from the render's own palette rather than a
+    // fixed hue, so it does not introduce a colour the rest of the song has not
+    // agreed to.
+    if (flagged) {
+      const c = wordColor(mode, seed, hue, index, myOrdinal, { scheme, accent: 1 });
+      const glow = c && !c.white ? c.css : "hsl(0, 92%, 62%)";
+      const st = titleStyle(glow);
+      return (
+        <span key={i} style={{ ...st, fontSize: pct === "100.00%"
+          ? st.fontSize
+          : (parseFloat(pct) / 100 * parseFloat(st.fontSize)).toFixed(2) + "%" }}>
+          {part}
+        </span>
+      );
+    }
+
     // Same per-SYLLABLE colour decision as colorSpans. This is the path --loudest
     // actually takes, since it sets sizeMode:"word", so when colour lived only in
     // wordSpans it was per word, and when it lived only in colorSpans it was not
@@ -972,7 +1000,7 @@ export function cueStyle(style, p, q, j, life = 0) {
   return s;
 }
 
-export const LyricOverlay = ({ cues, title, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill, wrap, xPos, cutRoom }) => {
+export const LyricOverlay = ({ cues, title, titleWords, band, seed, style, fontSize, color, shadow, position, background, mode, sizeMode, sizeVar, wordAnim, letterAnim, letterVar, titleCard, titleCardOutro, mixBlock, mixPlanSpec, widthModel, beats, beatTol, motion, motionBlock, sizeDrift, depth, colorMode, colorHue, colorScheme, colorGradient, colorAccent, cut, type, stroke, strokeColor, scanlines, scanlineAlpha, amplitudes, wordFill, wrap, xPos, cutRoom }) => {
   // Per-cue audio amplitude, 0..1, for the glow layer. Read from the analysis
   // render.mjs produced; null when there is none, and pulseGlow falls back to a
   // slow breath rather than to nothing.
@@ -1631,6 +1659,13 @@ function renderCue(cueObj, isPrev, life) {
   // with `wrapAt(shown)` rather than the original `size` is the difference
   // between rows that match the type on screen and rows computed for a type
   // that was then made smaller.
+  // The song title, for the title-word highlight. It is a prop (Root.jsx reads it
+  // from the .lrc's [ti:]) and it is passed as an ARRAY so that a caller who knows
+  // both the Nepali and the romanised title can supply both and have either match --
+  // the request was "the Allare word in nepali or english". Empty string disables
+  // the feature entirely and every lookup below becomes a no-op.
+  const titleArg = (titleWords && titleWords.length ? titleWords : (title ? [title] : null));
+
   const breakAfter = (() => {
     if (!wrapOn || g.kind === "roam") return new Set();
     // THE ROWS ARE DECIDED AT THE FULL SIZE, and that is the whole fix.
@@ -1733,13 +1768,13 @@ function renderCue(cueObj, isPrev, life) {
       })
     : sizeMode === "word"
       ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0,
-          colorMode, lineHue, colorScheme, accent)
+          colorMode, lineHue, colorScheme, accent, titleArg)
       : colorOn && !grad
         // A phrase unit still gets PER-WORD colour -- just not the animation
         // spans. See colorSpans(): colour and animation have different
         // requirements, and coupling them meant a whole sentence came out one
         // colour.
-        ? colorSpans(cueObj.text, master, cueObj.index, colorMode, lineHue, colorScheme, accent)
+        ? colorSpans(cueObj.text, master, cueObj.index, colorMode, lineHue, colorScheme, accent, titleArg)
         : cueObj.text;
 
   // --cut / --color-mode on a PHRASE unit, which has no word spans.
