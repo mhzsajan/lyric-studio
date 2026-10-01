@@ -112,29 +112,84 @@ const COMMON = [
   // font" is checkable against this file rather than against a memory of it.
   "--wrap", "rows",
   "--x-pos",
-];
-
-// FAST: every layer, dancing included. Colour PER WORD (calm paints words only).
-const FAST = [
-  "--loudest",
-  "--color-mode", "calm",
-  "--cut", "word",
-  "--type", "letter",
-];
-
-// SLOW: no cut, no dancing. Colour PER LETTER.
-const SLOW = [
-  "--motion", "calm",
-  "--depth", "calm",
-  "--word-anim", "reveal",
-  "--letter-anim", "pop",
-  "--letter-var", "0.03",
-  "--size-mode", "word",
   "--mode", "mix",
   "--mix-block", "8",
-  "--color-mode", "vivid",
-  "--type", "letter",
+  // From NO_GLYPH_MOTION. Spread into COMMON so both treatments get it and it
+  // cannot be forgotten on one path -- which is how the two font tables drifted
+  // apart in the first place.
+  "--size", "105",
+  "--size-var", "0",
+  "--size-drift", "0",
+  "--letter-var", "0",
+  "--size-mode", "off",
+  "--cut", "off",
+  "--type", "off",
+  "--depth", "off",
+  "--motion", "off",
+  "--word-anim", "off",
+  "--letter-anim", "off",
 ];
+
+// EVERY PER-SYLLABLE TRANSFORM IS OFF. This is a correctness retreat, not a taste
+// decision, and the reason is specific.
+//
+// The report was: "all the upper section of this text, तिमीले becomes तमाला" and
+// "texts that have lower characters, मायालु becomes mayal" -- and then, decisively,
+// "not everywhere but at certain sections of the song, half way correct and half
+// way not". Losing BOTH the above-matras (ी े ै) and the below-matras (ु ू), in
+// SOME sections only, is one fault and not two: something is altering the glyphs
+// between syllables, so the parts that stick out past a consonant lose their
+// attachment and the word reads as a different word.
+//
+// RULED OUT BY MEASUREMENT, not by reasoning:
+//   - the font. fontTools says the ink for these strings is 0.98em above the
+//     baseline and 0.30em below, and the rendered block is 131px for a 105px font
+//     against 135px needed. Nothing is clipped and no matra is absent from the face.
+//   - the frame edge. 24 sampled frames, every one of them 450-600px clear of the
+//     top and 330-500px clear of the bottom. scripts/bbox_report.py measures it.
+//   - grapheme splitting. splitGraphemes("दुईतर्फी") is ["दु","ई","त","र्फी"] -- the
+//     conjunct र्फ and the ी matra are both intact inside one cluster.
+//   - per-word and per-letter SIZE. --size-var 0 --size-drift 0 --letter-var 0
+//     --size-mode off changed nothing; the fault is still there.
+//   - the tear bar, which is at the BOTTOM and was already fixed.
+//
+// So the remaining suspects are the layers that transform a syllable relative to
+// its neighbours: --cut, --type, --depth, --motion, --word-anim, --letter-anim.
+// Devanagari's shirorekha is continuous across a word, which is why this repo has
+// an entire rule about it (gotcha 8) -- and every one of those layers is a
+// per-syllable transform wearing a licence to move ink.
+//
+// Given a deadline, the right move is to ship what is PROVEN correct and add
+// effects back one at a time, each verified by eye, rather than ship a treatment
+// that mangles words. What survives below is everything that does not touch glyph
+// geometry: the four Unicode faces, the rows wrap, the x-pos variety, the mix band
+// shapes, the red/white duo at the corrected luminance floor, and the scanlines.
+//
+// To put a layer back, add it to FAST or SLOW and re-render ONE song, then look at
+// a magnified crop of a word with a pre-base i-matra and a below-matra -- दुईतर्फी
+// and मायालु are the two that exposed this, so they are the two to check.
+const NO_GLYPH_MOTION = [
+  // One size for every glyph in the frame. See above for why this is not optional.
+  "--size", "105",
+  "--size-var", "0",
+  "--size-drift", "0",
+  "--letter-var", "0",
+  "--size-mode", "off",
+  // Nothing that moves or clips a syllable relative to its neighbours.
+  "--cut", "off",
+  "--type", "off",
+  "--depth", "off",
+  "--motion", "off",
+  "--word-anim", "off",
+  "--letter-anim", "off",
+];
+
+// FAST and SLOW now differ only in which colour level paints, and per-letter
+// colour is off in both because `--color-mode vivid` steps hue ACROSS a word --
+// which is a per-letter transform, and is under the same suspension as the rest.
+const FAST = ["--color-mode", "calm"];
+
+const SLOW = ["--color-mode", "calm"];
 
 // [folder, song, seconds, treatment, fontV1, fontV2]
 // `seconds` is PROBED by scripts/plan.mjs, never typed from memory.
