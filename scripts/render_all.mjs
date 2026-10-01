@@ -210,14 +210,27 @@ const force = process.argv.includes("--force");
  * The font gate proves the rest at render time and refuses the job if it does
  * not, so this list is a statement of intent and the gate is the authority.
  */
+// THE FONTS HERE ARE THE FOUR UNICODE FACES, AND THAT IS A CORRECTNESS DECISION.
+//
+// Every Preeti face is out of the batch. CV Haha draws the wrong glyphs for Ow
+// Amira, and the font gate cannot catch that class, because the gate reads cmap
+// tables and "correct" is a claim about shape. Four songs were re-rendered on
+// unverified faces before that was measured by eye.
+//
+// NOTE FOR THE NEXT EDIT: this is NOT the same list as JOBS above. There are two
+// tables -- JOBS drives the 7-vs-14 plan, SEVEN drives --one-per-song -- and they
+// are read by different code paths. Changing only JOBS does nothing to
+// --one-per-song, which is how a font rotation was committed, verified in a dry
+// run, and then rendered with the old fonts anyway. If you change one, change
+// both, and check the plan output rather than the source.
 const SEVEN = [
-  ["01 Allare BPM 120", "Allare", "rajdhani"],
-  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", "arap007"],
-  ["03 Kali Kali BPM 120", "Kali Kali", "pawang"],
-  ["04 Ow Amira BPM 122", "Ow Amira", "cvhaha"],
+  ["01 Allare BPM 120", "Allare", "arya"],
+  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", "kalam"],
+  ["03 Kali Kali BPM 120", "Kali Kali", "yantramanav"],
+  ["04 Ow Amira BPM 122", "Ow Amira", "rajdhani"],
   ["05 Ritu BPM 105", "Ritu", "arya"],
-  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", "katmandu"],
-  ["07 Wora Para BPM 115", "Wora Para", "kalam"],
+  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", "kalam"],
+  ["07 Wora Para BPM 115", "Wora Para", "yantramanav"],
 ];
 
 // Flatten to one entry per VIDEO, so the gate and the log speak in videos --
