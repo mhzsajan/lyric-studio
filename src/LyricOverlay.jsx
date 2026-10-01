@@ -7,7 +7,7 @@ import { wrapRows, rowStarts } from "./wrap.js";
 import { wordTimings } from "./word-timing.js";
 import { anchorsForCue } from "./beats.js";
 import { splitGraphemes, letterSizePct } from "./letters.js";
-import { titleWordFlags, titleStyle } from "./title.js";
+import { titleWordFlags, titleStyle, hasTitleWord } from "./title.js";
 // Per-word and per-letter COLOUR (src/color.js). Separate from the depth layers
 // because colour is not a transform and, unlike them, takes no frame time at all
 // -- it is assigned from a seed and stays, so it cannot put a word on screen
@@ -406,7 +406,8 @@ function animatedWords(text, opts) {
           sizeDrift, depthLevel = "off", amplitude = null,
           colorMode = "off", colorHue = 210, colorScheme = "analogous", accent = 1,
           cut = "off", type = "off", stroke = 0, strokeColor = "#000000",
-          baseSize = 105, wordFill, breakAfter = new Set(), cutRoom = null } = opts;
+          baseSize = 105, wordFill, breakAfter = new Set(), cutRoom = null,
+          titles = null } = opts;
 
   // The cue's own span and start, needed by the composition layers. A cue's
   // span is the budget every layer has to finish inside -- the same budget
@@ -570,6 +571,42 @@ function animatedWords(text, opts) {
     const wc = wordColor(colorMode, seed, colorHue, index, i, { scheme: colorScheme, accent });
     const colorStyle = wc ? { color: wc.css } : {};
 
+    // THE TITLE WORD, AND THIS IS THE BRANCH THAT MATTERS.
+    //
+    // The highlight was implemented in wordSpans() and in colorSpans(). Those are
+    // the `spans === false` branches. This function is the `spans === true` one,
+    // and `spans` is true whenever word OR letter animation is on -- so with
+    // --loudest, which turns both on, animatedWords() is the ONLY path these
+    // renders ever take.
+    //
+    // Which means the title highlight was DEAD in all seven delivered videos while
+    // the report cheerfully said "fires on 96 words across 32 cues". The report
+    // calls titleWordFlags() on parsed.cues directly and never learns which branch
+    // the composition renders, so it was measuring the matcher and not the feature.
+    // That is gotcha 31 a third time -- a value that reaches the report but not the
+    // render -- and the third occurrence of the shape check_smoke.mjs was written
+    // for, which cannot catch it either: nothing throws, nothing is undefined, the
+    // word simply comes out unstyled.
+    //
+    // WHY IT IS PAINT-ONLY, same reason as wordSpans(): an effect that only ADDS
+    // paint cannot detach a matra. The glow is a textShadow, there is no filter and
+    // no transform, and the one geometric property is a per-WORD font-size, which
+    // is safe because a word is a single span.
+    //
+    // Tested against w.text rather than by indexing a flag array, because `words`
+    // comes from wordTimings() and an index alignment between two independently
+    // built word lists is exactly the kind of thing that is right until it is not.
+    const flagged = titles ? hasTitleWord(w.text, titles) : false;
+    const tStyle = flagged
+      ? titleStyle(wc && !wc.white ? wc.css : "hsl(0, 92%, 62%)")
+      : null;
+    // The size bump composes with the per-word size rather than replacing it, so a
+    // title word in a line of varied words is still varied. Same arithmetic as
+    // wordSpans().
+    const titlePct = !tStyle
+      ? pct
+      : (pct ? (parseFloat(pct) * 1.14).toFixed(2) + "%" : tStyle.fontSize);
+
     const depthStyle = depthLevel === "off" ? {} : wordDepthStyle({
       tracking: dTrack, baseline: dBase, arc: dArc, depth: dDep,
       chromatic: dChroma, glow: dGlow,
@@ -612,8 +649,8 @@ function animatedWords(text, opts) {
             // relative ONLY when there is a torn edge, so a render with --cut off
             // builds exactly the nodes it built before this existed.
             ...(tear ? { position: "relative", paddingBottom: "0.16em" } : {}),
-            ...(pct ? { fontSize: pct } : {}),
-            ...colorStyle,
+            ...(titlePct ? { fontSize: titlePct } : {}),
+            ...(tStyle ? { color: tStyle.color, textShadow: tStyle.textShadow } : colorStyle),
             ...ws,
             // Four writers to one `transform` now: the word's own entrance, the
             // motion offset, the size drift, and the cut. They are JOINED in a
@@ -1745,6 +1782,11 @@ function renderCue(cueObj, isPrev, life) {
         // Remotion reports as a bare frame number with no stack and no file.
         colorScheme, cut, type, stroke, strokeColor, baseSize: shown, accent,
         wordFill,
+        // The title word, for the reason spelled out at the top of animatedWords():
+        // THIS is the branch every render in this batch takes, so the highlight
+        // has to be applied here or not at all. It was wired into wordSpans() and
+        // colorSpans() only, which is why it fired in no delivered video.
+        titles: titleArg,
         // `cutRoom` MUST be threaded down here, not just accepted by the
         // composition's signature. That omission cost five renders: the prop was
         // destructured on LyricOverlay, tearBar() read it inside animatedWords(),
