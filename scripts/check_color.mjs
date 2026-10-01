@@ -502,6 +502,63 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
       ` -- a hue-blind luma would report both as ${(blind(1, 0.5) * 255).toFixed(0)}`);
   }
 
+  // THE FLOOR, APPLIED TO LETTERS. This was missing, and it is not a formality:
+  // `--color-mode vivid` (the two SLOW songs) paints per letter, so a floor that
+  // only ever walks WORDS is not a floor on half the ink in those files.
+  //
+  // The failure it would have caught is specific. letterColor() clamps a letter's
+  // lightness to the LEVEL's HSL range, and those ranges are chosen for contrast
+  // between letters, not against the floor -- so a `wild` letter at hue 240 lands
+  // near luma 130 while its own word sits at 160. One letter dimmer than the rest
+  // of its word: the "letter-sized dropout" the comment in letterColor() warns
+  // about, and nothing was checking for it.
+  {
+    let badLetter = null;
+    let lowLetter = 1;
+    let whereLow = null;
+    for (const lvl of LEVELS) {
+      for (const scheme of COLOR_SCHEMES) {
+        for (const hue of [0, 30, 60, 120, 210, 240, 300]) {
+          for (const line of LINES) {
+            const words = wordsOf(line);
+            for (let wi = 0; wi < words.length; wi++) {
+              const c = wordColor(lvl, SEED, hue, line.cue, wi, { scheme });
+              if (!c || c.white) continue;
+              const g = splitGraphemes(words[wi]);
+              for (let li = 0; li < g.length; li++) {
+                const lc = letterColor(lvl, SEED, hue, line.cue, wi, li, c);
+                if (!lc || lc.white) continue;
+                const l = luma(lc.hue, lc.sat, lc.light);
+                if (l < lowLetter) { lowLetter = l; whereLow = lvl + "/" + scheme + "/h" + hue; }
+                if (l < LUMA_FLOOR - 1e-6) {
+                  badLetter = badLetter + " " + lvl + "/" + scheme + "/h" + hue + " l" + li +
+                    " " + (l * 255).toFixed(0);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    ok(!badLetter,
+      "and PER LETTER too -- a floor that only sees words is not a floor",
+      badLetter ? badLetter.slice(0, 140)
+        : "lowest letter " + (lowLetter * 255).toFixed(0) + "/255 at " + whereLow);
+
+    // The teeth: the specific case that produced it, asserted on its own so a
+    // wholesale pass cannot hide it.
+    const wb = (() => {
+      const c = wordColor("wild", SEED, 240, 0, 0, { scheme: "analogous" });
+      if (!c || c.white) return null;
+      const lc = letterColor("wild", SEED, 240, 0, 0, 1, c);
+      return lc && !lc.white ? luma(lc.hue, lc.sat, lc.light) : null;
+    })();
+    ok(wb === null || wb >= LUMA_FLOOR - 1e-6,
+      "including the case that produced it: a wild letter at hue 240",
+      wb === null ? "no coloured letter at that hue"
+        : "letter " + (wb * 255).toFixed(0) + "/255 vs floor " + (LUMA_FLOOR * 255).toFixed(0) + "/255");
+  }
+
   // And the specific claim being made about duo. THIS ASSERTION HAD TO CHANGE,
   // and the reason it changed is the whole bug.
   //

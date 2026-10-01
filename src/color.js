@@ -445,12 +445,23 @@ export function letterColor(level, seed, baseHue, cueIndex, wordIndex, letterInd
   // So a duo letter wanders around the word's solved lightness and is then put
   // back through the same readability floor, which is what stops a letter from
   // being the dim one.
+  //
+  // The NON-duo branch had the same hole and it was worse, because the level's
+  // light range is not a floor: it is a range chosen so letters contrast with
+  // EACH OTHER, and nothing in it promises the word stays readable. Clamping a
+  // letter into [0.73, 0.93] at hue 210 and sat 0.95 lands it at luma 145, under
+  // the 158 floor, while its own word sits at 160 -- one dim letter inside a
+  // readable word. check_color.mjs now walks letters and found it; before that it
+  // walked words only and passed.
   const wander = (unit(`${seed}:C${cueIndex}:w${wordIndex}:lLight`, letterIndex) * 2 - 1) * 0.05;
-  const light = word.duo
-    ? ensureReadable(hue, sat, clamp(word.light + wander, 0, 1))
-    : clamp(word.light + wander, band.light[0], band.light[1]);
+  const light = clamp(
+    word.light + wander,
+    band.light ? band.light[0] : 0,
+    band.light ? band.light[1] : 1
+  );
 
-  return { hue, sat, light, white: false, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
+  return { hue, sat, light: ensureReadable(hue, sat, light), white: false,
+           css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
 }
 
 /** Whether a level paints letters as well as words. Used to decide span nesting. */
