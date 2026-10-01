@@ -429,7 +429,10 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
         for (const line of LINES) {
           wordsOf(line).forEach((w, i) => {
             const c = wordColor(lvl, SEED, hue, line.cue, i, { scheme });
-            const l = luma(c);
+            // The hue has to be passed in. `luma(c)` used to work because luma()
+            // took an object and ignored the hue -- and ignoring the hue is the
+            // bug this whole section now exists to prevent.
+            const l = luma(c.hue, c.sat, c.light);
             lowest = Math.min(lowest, l);
             if (l < LUMA_FLOOR - 1e-9) {
               bad = bad + `${lvl}/${scheme}/h${hue} "${w}" luma ${(l * 255).toFixed(0)}`;
@@ -443,19 +446,77 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
     "every colour of every scheme clears the LUMINANCE floor, at every hue",
     bad || `lowest ${(lowest * 255).toFixed(0)}/255, floor ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
 
-  // The constraint on the FLOOR ITSELF, which is the thing this section exists to
-  // record. A fully saturated red has a luminance of 0.2126*255 = 54, so any
-  // floor above that forbids red by arithmetic -- and the first version of this
-  // floor was 60, chosen to sound safe, which is precisely why getting a real red
-  // out of this file was hard. If this assertion ever fails, the floor has been
-  // raised past the point where red is expressible, and that is the bug.
-  ok(LUMA_FLOOR < 54 / 255,
-    "the floor stays below pure red's maximum luminance (54/255), so red is legal",
-    `floor ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
+  // THE FLOOR IS NOW A REAL FLOOR, and these two assertions replace the one that
+  // used to be here.
+  //
+  // The old assertion was `LUMA_FLOOR < 54/255` -- "stay below pure red's maximum
+  // luminance, so red stays legal". It was arithmetically true and it was the
+  // reason this bug shipped: it treated the floor as a thing to keep LOW, so the
+  // floor ended up at 40/255, red words rendered at 51/255, and a fifth of white
+  // is not a readable Devanagari glyph. The note even said a floor above 54
+  // "forbids red by arithmetic", which is true, and then concluded that red must
+  // therefore be dim. The arithmetic says you cannot brighten a saturated hue by
+  // scaling it. It does not say you cannot lighten it, and lightening it is the
+  // only lever there is.
+  //
+  // So: the floor is high, and the code RAISES lightness to meet it. The cost is
+  // that a readable hue-0 red is a light red, and that is asserted below as an
+  // explicit, visible trade rather than smuggled in as a dim word.
+  ok(LUMA_FLOOR >= 0.5,
+    "the floor is high enough that a coloured word is genuinely readable",
+    `${(LUMA_FLOOR * 255).toFixed(0)}/255, ${(LUMA_FLOOR * 100).toFixed(0)}% of white`);
 
-  // And the specific claim being made about duo: a real RED, not a pink. Asserted
-  // as the rgb triple, because "looks red" is not a thing a script can check and
-  // "R is high and G and B are near zero" is.
+  // The load-bearing one: the floor must hold for the DARK hues, not just red.
+  // The old luma() reported the same number for every hue, so this passed no
+  // matter what the code emitted -- and `--color-hue 210`, the house style,
+  // produces colours around 40% darker than the checker believed.
+  {
+    let worstHue = null;
+    let low = 1;
+    for (const hue of [210, 240, 270, 300]) {
+      for (const scheme of COLOR_SCHEMES) {
+        for (const lvl of LEVELS) {
+          for (const line of LINES) {
+            for (let i = 0; i < wordsOf(line).length; i++) {
+              const c = wordColor(lvl, SEED, hue, line.cue, i, { scheme });
+              const l = c.white ? 1 : luma(c.hue, c.sat, c.light);
+              if (l < low) { low = l; worstHue = `h${hue}/${scheme}/${lvl}`; }
+            }
+          }
+        }
+      }
+    }
+    ok(low >= LUMA_FLOOR - 1e-6,
+      "and it holds at the DARK hues -- blue and indigo, not just red",
+      `lowest ${(low * 255).toFixed(0)}/255 at ${worstHue}` +
+      (low < LUMA_FLOOR - 1e-6 ? "  <- a hue is darker than the floor" : ""));
+
+    // And the instrument itself: the OLD luma() must fail this. A floor check that
+    // cannot distinguish red from blue is not a floor check.
+    const blind = (sat, light) => luma(0, sat, light);   // the old hue-blind version
+    const redL = luma(0, 1, 0.5);
+    const blueL = luma(240, 1, 0.5);
+    ok(blind(1, 0.5) === redL && Math.abs(redL - blueL) > 0.1,
+      "and luma() actually distinguishes hues (the old one could not)",
+      `red ${(redL * 255).toFixed(0)} vs blue ${(blueL * 255).toFixed(0)}` +
+      ` -- a hue-blind luma would report both as ${(blind(1, 0.5) * 255).toFixed(0)}`);
+  }
+
+  // And the specific claim being made about duo. THIS ASSERTION HAD TO CHANGE,
+  // and the reason it changed is the whole bug.
+  //
+  // It used to demand `R > 180 && G < 90 && B < 90` -- a genuine red, not a pink.
+  // That assertion is not merely inconvenient, it is the DEFECT: a colour with
+  // G and B under 90 is a colour around luma 60, which is a fifth of white, and a
+  // fifth of white on black erases the i-matra, the e-matra and the conjunct joins
+  // and leaves a shape that is a different consonant. The check was demanding
+  // precisely the property that made the words unreadable, and it passed, because
+  // the palette was doing what the check asked.
+  //
+  // What has to hold instead is the pair of things that are actually in tension:
+  // the accent is RED-DOMINANT (it must read as red, not as a pale wash), and it
+  // is READABLE (its luminance must clear the floor). Both, or the design is
+  // lying about one of them.
   const reds = [];
   for (const line of LINES) {
     for (let cue = 0; cue < 20; cue++) {
@@ -463,32 +524,58 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
         const c = wordColor("vivid", SEED, 0, cue, i, { scheme: "duo" });
         if (c.white) continue;
         const [r, g, b] = c.rgb.split(", ").map(Number);
-        reds.push({ r, g, b });
+        reds.push({ r, g, b, l: luma(c.hue, c.sat, c.light) });
       }
     }
   }
-  const isRed = reds.filter((x) => x.r > 180 && x.g < 90 && x.b < 90).length;
-  ok(reds.length > 0 && isRed / reds.length > 0.8,
-    "duo at hue 0 renders a genuine RED, not a pink",
-    `${isRed}/${reds.length} have R>180 and G,B<90`);
+  // Red-dominant: R clearly the largest channel, and clearly above the others.
+  // Not "G and B near zero" -- that was the unreadable requirement.
+  const isRed = reds.filter((x) => x.r >= 200 && x.r - Math.max(x.g, x.b) >= 45).length;
+  ok(reds.length > 0 && isRed / reds.length > 0.9,
+    "duo at hue 0 still reads as RED -- the accent is not a pale wash",
+    `${isRed}/${reds.length} have R>=200 and R-max(G,B)>=45`);
+
+  // And the luminance of the very same colours, which is the half that was missing.
+  const redLum = reds.map((x) => x.l);
+  const redLow = Math.min(...redLum);
+  ok(redLow >= LUMA_FLOOR - 1e-6,
+    "and every one of those reds is READABLE -- the other half, and the actual bug",
+    `lowest red luma ${(redLow * 255).toFixed(0)}/255, floor ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
+
+  // The trade, stated as a number so it cannot be quietly widened later: a red that
+  // clears the floor is a LIGHT red. This is arithmetic, not taste -- red carries
+  // 0.2126 of the luminance budget and cannot be scaled brighter, so the only lever
+  // is desaturation. If someone needs a true primary red they must choose a dim
+  // word, and that is now a visible decision rather than a silent one.
+  {
+    const pure = [255, 0, 0];
+    const pureL = 0.2126 * 255;
+    const sample = reds[0];
+    ok(pureL < LUMA_FLOOR * 255,
+      "and it is recorded that a PURE red cannot meet the floor (so the accent is light)",
+      `rgb(255,0,0) = ${pureL.toFixed(0)}/255; a shipped red is rgb(${sample.r},${sample.g},${sample.b}) = ${(sample.l * 255).toFixed(0)}/255`);
+  }
 
   // White words must be brighter than the red ones -- that is what makes it an
-  // accent pairing rather than two colours at the same weight.
+  // accent pairing rather than two colours at the same weight. With the floor at
+  // 0.62 this gap is NARROWER than it was, and honestly so: an accent that has to
+  // be readable cannot also be very dark. The assertion is the real relationship
+  // (white is the brighter of the two) rather than a comfortable margin.
   let worstPair = null;
   for (const line of LINES) {
     for (let cue = 0; cue < 20; cue++) {
       const cols = wordsOf(line).map((_, i) =>
         wordColor("vivid", SEED, 0, cue, i, { scheme: "duo" }));
-      const w = cols.filter((c) => c.white).map(luma);
-      const r = cols.filter((c) => !c.white).map(luma);
+      const w = cols.filter((c) => c.white).map((c) => luma(c.hue, c.sat, c.light));
+      const r = cols.filter((c) => !c.white).map((c) => luma(c.hue, c.sat, c.light));
       if (w.length && r.length) {
         const gap = Math.min(...w) - Math.max(...r);
         if (worstPair === null || gap < worstPair) worstPair = gap;
       }
     }
   }
-  ok(worstPair !== null && worstPair > 0.2,
-    "the white is always clearly brighter than the red -- white reads as the accent",
+  ok(worstPair !== null && worstPair >= 0,
+    "and white is still the brighter of the two -- the pairing still reads as an accent",
     "smallest gap " + (worstPair === null ? "n/a" : (worstPair * 255).toFixed(0) + "/255"));
 }
 

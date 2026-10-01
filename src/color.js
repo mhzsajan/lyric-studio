@@ -118,39 +118,31 @@ const slotsFor = (scheme) =>
 // sit between the accent and the paper instead of reading as an accent.
 const WHITE_SLOT = { sat: 0, light: 1 };
 
-// `duo` gets its OWN chroma range, and this is the most consequential line in
-// the file.
+// `duo` gets its OWN chroma treatment, and the shape of it is the second half of
+// the red-word fix.
 //
-// "Red" and "the red the shared `vivid` range gives you" are not the same
-// colour. At sat 0.38-0.70 and light 0.80-0.95, hue 0 renders as a washed-out
-// PINK -- which is what the first red-and-white render looked like, and it was
-// not a bug in the palette, it was the level's lightness range doing exactly
-// what it was written to do. A recognisable red is sat ~1.0 at light ~0.5.
-//
-// That is BELOW every level's lightness floor. And it should be allowed to be,
-// because the floor was measuring the wrong thing. What Add blending adds, and
-// what scan_visibility.py counts, is LUMINANCE -- and a saturated red at
-// hsl(0, 1, 0.5) is rgb(255,0,0) with a luminance of 76/255. That is far above
-// the scan's threshold of 12 and plainly visible over footage, while its HSL
-// lightness is only 0.50.
-//
-// So the real invariant is a LUMA floor, asserted in check_color.mjs, and a
-// scheme that trades HSL lightness for chroma is legitimate as long as luma
-// holds. Without that change there is exactly one way to get a real red -- a
-// hand-written --color -- which bypasses the seeded system and the checks with
-// it.
-const DUO_CHROMA = { sat: [0.82, 1.0], light: [0.46, 0.60] };
+// A recognisable red is sat ~1.0. Saturation is kept high and LIGHTNESS is solved
+// from a target luminance, because saturation is free and luminance is the scarce
+// resource: red carries 0.2126 of the luminance budget, blue only 0.0722, so the
+// same sat/light pair is three times brighter in red than in blue. Varying HSL
+// lightness and hoping for the best is therefore varying the one thing that
+// decides whether the word can be read.
+const DUO_CHROMA = {
+  sat: [0.82, 1.0],
+  // How far ABOVE the floor the accent's luminance may sit. Narrow on purpose: the
+  // point of the accent is to be one readable coloured word among white ones, not
+  // to be the brightest thing on screen.
+  lumaSpread: 0.10,
+};
 
-/** Relative luminance 0..1 -- what Add blending adds, and what the scan counts. */
-export function luma({ sat, light }) {
-  const hue = 0; // hue is irrelevant: the HSL->RGB channels are permuted, and the
-  // LUMINANCE weights sum to 1 whichever way round they land.
-  void hue;
-  const s = clamp(sat, 0, 1);
-  const l = clamp(light, 0, 1);
-  if (s === 0) return l;
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
+/** hsl -> [r,g,b] each 0..1. The one conversion in this file; everything uses it. */
+export function hslToRgb01(h, s, l) {
+  const sat = clamp(s, 0, 1);
+  const li = clamp(l, 0, 1);
+  if (sat === 0) return [li, li, li];
+  const hue = wrapHue(h) / 360;
+  const q = li < 0.5 ? li * (1 + sat) : li + sat - li * sat;
+  const p = 2 * li - q;
   const band = (t) => {
     let x = t;
     if (x < 0) x += 1;
@@ -160,25 +152,119 @@ export function luma({ sat, light }) {
     if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
     return p;
   };
-  const [r, g, b] = [band(1 / 3), band(0), band(2 / 3)];
+  return [band(hue + 1 / 3), band(hue), band(hue - 1 / 3)];
+}
+
+/**
+ * Relative luminance 0..1 -- what Add blending adds, and what the scan counts.
+ *
+ * HUE-AWARE, AND THAT IS THE WHOLE POINT.
+ *
+ * The first version of this function took `{sat, light}`, hardcoded `hue = 0`, and
+ * carried a comment saying hue is irrelevant because "the HSL->RGB channels are
+ * permuted, and the LUMINANCE weights sum to 1 whichever way round they land".
+ *
+ * The weights do sum to 1. That is true and irrelevant. Luminance MULTIPLIES each
+ * channel by its own weight -- 0.2126 red, 0.7152 green, 0.0722 blue -- so
+ * permuting the channels changes the answer, and it changes it enormously:
+ *
+ *     hsl(0,   1, 0.5) = rgb(255,   0,   0)  ->  luma  54/255   (21% of white)
+ *     hsl(210, 1, 0.5) = rgb(  0,  84, 255)  ->  luma  38/255   (15% of white)
+ *     hsl(240, 1, 0.5) = rgb(  0,   0, 255)  ->  luma  18/255   ( 7% of white)
+ *
+ * Blue carries 0.0722 of the luminance, so pure blue is SEVEN TIMES darker than
+ * pure red at identical HSL. A luma() that cannot tell them apart reports the
+ * same number for all three, which means:
+ *
+ *   - the LUMA_FLOOR assertion in check_color.mjs was measuring pure red's
+ *     brightness while looking at a blue swatch, so it cleared colours that are
+ *     invisible; and
+ *   - `--color-hue 210`, the value in this repo's own house style, produces
+ *     colours roughly 40% darker than the floor check believed they were.
+ *
+ * That is a check that measures the wrong quantity, which is worse than no check:
+ * it produced a green tick on unreadable words. It is the rule-2 failure in its
+ * purest form -- an instrument that cannot fail.
+ */
+export function luma(hue, sat, light) {
+  const [r, g, b] = hslToRgb01(hue, sat, light);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-// The floor, in the same units the scan uses (0..255).
+/**
+ * The lightness that gives `hue`/`sat` exactly `target` luminance.
+ *
+ * Solved by bisection rather than written out, because the answer is a different
+ * quadratic for every hue -- and writing six of them is six chances to be wrong
+ * about blue, which is the hue that hid the bug. Luminance rises monotonically
+ * with lightness at fixed hue and saturation, so bisection cannot diverge.
+ */
+export function lightForLuma(hue, sat, target) {
+  const want = clamp(target, 0, 1);
+  if (luma(hue, sat, 1) <= want) return 1;          // even white cannot reach it
+  if (luma(hue, sat, 0) >= want) return 0;
+  let lo = 0;
+  let hi = 1;
+  for (let k = 0; k < 28; k++) {
+    const mid = (lo + hi) / 2;
+    if (luma(hue, sat, mid) < want) lo = mid;
+    else hi = mid;
+  }
+  // `hi`, NOT the midpoint. The loop maintains luma(lo) < want <= luma(hi), so hi
+  // is the only value guaranteed to MEET the target. Returning (lo+hi)/2 -- which
+  // is what this did first -- lands a hair under it often enough to matter: every
+  // dark hue in the batch came out at 158/255 against a floor of 0.62 (=158.1),
+  // and the floor assertion failed on its own output by three hundredths of a
+  // level. A solver that returns a value just below the number it was asked for
+  // is a solver that will eventually be blamed for the caller's arithmetic.
+  return hi;
+}
+
+// THE FLOOR, AND WHY IT IS NOT 40 ANY MORE
+// -----------------------------------------
+// The old floor was 40/255, on the reasoning that a saturated red is "plainly
+// visible over footage". Measured on the shipped files, it was not:
 //
-// AND THE CONSTRAINT ON THIS NUMBER, which is the useful part:
+//     Jam Na Maya Jam, t=189s   the red actually drawn  rgb(240, 0, 0)   luma  51
+//     Jam Na Maya Jam, t=180s   the red actually drawn  rgb(240,32,48)   luma  77
+//     Kali Kali,       t=309s   the red actually drawn                   luma  78
+//     Kali Kali,       t=306s   the red actually drawn                   luma 128
 //
-// A fully saturated red at hsl(0, 1, 0.5) is rgb(255,0,0), whose luminance is
-// 0.2126 * 255 = 54. So 54/255 is the MAXIMUM luminance any pure red can have,
-// and ANY floor above it forbids red by arithmetic. The first version of this
-// floor was 60/255, chosen to sound safe, and it made a real red impossible --
-// which is the entire reason this problem existed in the first place, arriving
-// again from the other direction. If you raise this number, check that a red is
-// still legal before you commit.
+// 51/255 is a fifth of white. A Devanagari glyph at a fifth of white, on black,
+// loses every thin stroke -- the i-matra above the shirorekha, the e-matra, the
+// joins in a conjunct, the descender of a ja or a kha. What survives is the thick
+// core of each consonant, and a thick core is a DIFFERENT LETTER. That is the
+// reported "the red word makes the sentence incorrect": the word was not merely
+// dim, it was misread.
 //
-// 40/255 is a sixth of white: comfortably above the scan's --lit threshold of 12,
-// plainly visible over footage, and low enough to admit red.
-export const LUMA_FLOOR = 40 / 255;
+// The previous note here also said, correctly, that any floor above 54/255
+// "forbids red by arithmetic" -- and then set the floor to 40, which is the same
+// conclusion reached by giving up. The arithmetic is right and the conclusion was
+// wrong. A saturated hue CANNOT be made brighter by scaling it: red is already at
+// 255 in its own channel. The only lever that raises luminance is DESATURATION --
+// mixing toward white. So the floor is enforced by raising LIGHTNESS until the
+// hue clears it, and a "red" that clears a readability floor is a light red.
+//
+// That is a real trade and it is not hidden here: at luma 0.62 a hue-0 red is
+// rgb(255,149,149), which reads as coral. Anyone who needs a true primary red must
+// either accept a dim word or accept a pink one. There is no third option, and
+// pretending otherwise is what produced luma 51.
+export const LUMA_FLOOR = 0.62;
+
+/**
+ * Raise `light` until the colour clears LUMA_FLOOR. Applied to EVERY colour this
+ * file emits, at EVERY hue, so no scheme can opt out of readability by choosing a
+ * dark hue.
+ *
+ * A white slot is exempt: white is pinned at light 1.0 and is already the
+ * brightest thing in the frame, and "fixing" it would mean darkening white.
+ */
+export function ensureReadable(hue, sat, light, floor = LUMA_FLOOR) {
+  if (clamp(sat, 0, 1) === 0) return clamp(light, 0, 1);
+  const l = clamp(light, 0, 1);
+  if (luma(hue, sat, l) >= floor) return l;
+  return lightForLuma(hue, sat, floor);
+}
 
 // Per level, the four numbers that define the look. Written out rather than
 // computed so that changing the look is editing a table, not reading arithmetic.
@@ -352,11 +438,17 @@ export function letterColor(level, seed, baseHue, cueIndex, wordIndex, letterInd
   // lightness jump would put a dim letter between two bright ones, and under Add
   // blending that letter disappears against the footage while its neighbours stay
   // -- a letter-sized dropout, which is worse than any colour effect.
-  const light = clamp(
-    word.light + (unit(`${seed}:C${cueIndex}:w${wordIndex}:lLight`, letterIndex) * 2 - 1) * 0.05,
-    band.light[0],
-    band.light[1]
-  );
+  //
+  // For a `duo` word there is no band to clamp to -- DUO_CHROMA deliberately has
+  // no `light` range, because the word's lightness was SOLVED from its target
+  // luminance and clamping a solved value to an HSL range would undo the solve.
+  // So a duo letter wanders around the word's solved lightness and is then put
+  // back through the same readability floor, which is what stops a letter from
+  // being the dim one.
+  const wander = (unit(`${seed}:C${cueIndex}:w${wordIndex}:lLight`, letterIndex) * 2 - 1) * 0.05;
+  const light = word.duo
+    ? ensureReadable(hue, sat, clamp(word.light + wander, 0, 1))
+    : clamp(word.light + wander, band.light[0], band.light[1]);
 
   return { hue, sat, light, white: false, css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
 }
@@ -434,16 +526,34 @@ export function slotHsl(slot, L, seed, baseHue, saltTag, n, scheme) {
     return { hue: wrapHue(baseHue), sat: WHITE_SLOT.sat, light: WHITE_SLOT.light };
   }
   const hue = wrapHue(baseHue + slot);
-  // `duo`'s chromatic slot uses its own chroma range -- see DUO_CHROMA above for
-  // why a real red has to be allowed below the level's lightness floor.
-  const range = scheme === "duo" ? DUO_CHROMA : L;
+
+  // `duo`'s chromatic slot keeps its own SATURATION range -- a real red is
+  // sat ~1.0 -- and is then LIGHTENED until it clears the floor. Drawing a
+  // lightness directly and hoping it lands bright enough is what produced luma 51:
+  // the seeded range spanned both readable and unreadable, and nothing checked
+  // which end a given word got.
+  //
+  // So the seeded variation moved into the quantity that actually matters. `duo`
+  // varies its TARGET LUMINANCE across a narrow band above the floor, and solves
+  // lightness from that. Two red words in a line still differ, and every one of
+  // them is readable, which drawing HSL lightness could not promise.
+  if (scheme === "duo") {
+    const sat = DUO_CHROMA.sat[0] + unit(saltTag + ":sat", n) *
+      (DUO_CHROMA.sat[1] - DUO_CHROMA.sat[0]);
+    const target = LUMA_FLOOR + unit(saltTag + ":luma", n) * DUO_CHROMA.lumaSpread;
+    return { hue, sat, light: lightForLuma(hue, sat, target) };
+  }
+
+  const range = L;
   const sat = range.sat[0] + unit(saltTag + ":sat", n) * (range.sat[1] - range.sat[0]);
   const light = clamp(
     range.light[0] + unit(saltTag + ":light", n) * (range.light[1] - range.light[0]),
     range.light[0],
     range.light[1]
   );
-  return { hue, sat, light };
+  // And the same floor for every other level and scheme, so `--color-hue 210`
+  // cannot produce a word seven times darker than red without anybody noticing.
+  return { hue, sat, light: ensureReadable(hue, sat, light) };
 }
 
 /** Whether a slot is the white one. Small, but three call sites need it. */

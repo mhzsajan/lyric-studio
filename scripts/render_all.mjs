@@ -152,13 +152,13 @@ const SLOW = [
 // break the batch. scripts/gate_case.mjs and silent_cues.mjs do the same thing for
 // the same reason.
 const JOBS = [
-  ["01 Allare BPM 120", "Allare", 417.1, FAST, "rajdhani", "kalam"],
-  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", 295.4, FAST, "arap007", "shreenath"],
-  ["03 Kali Kali BPM 120", "Kali Kali", 409.1, FAST, "pawang", "mkali"],
-  ["04 Ow Amira BPM 122", "Ow Amira", 664.5, FAST, "cvhaha", "himalaya"],
-  ["05 Ritu BPM 105", "Ritu", 293.4, SLOW, "arya", "yantramanav"],
-  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", 323.3, SLOW, "katmandu", "pawang"],
-  ["07 Wora Para BPM 115", "Wora Para", 261.5, FAST, "rajdhani", "kalam"],
+  ["01 Allare BPM 120", "Allare", 417.1, FAST, "arya", "kalam"],
+  ["02 Jam Na Maya Jam BPM 115", "Jam Na Maya Jam", 295.4, FAST, "kalam", "rajdhani"],
+  ["03 Kali Kali BPM 120", "Kali Kali", 409.1, FAST, "yantramanav", "arya"],
+  ["04 Ow Amira BPM 122", "Ow Amira", 664.5, FAST, "rajdhani", "yantramanav"],
+  ["05 Ritu BPM 105", "Ritu", 293.4, SLOW, "arya", "kalam"],
+  ["06 Timilai Bhuleko BPM 110", "Timilai Bhuleko", 323.3, SLOW, "kalam", "rajdhani"],
+  ["07 Wora Para BPM 115", "Wora Para", 261.5, FAST, "yantramanav", "kalam"],
 ];
 
 /**
