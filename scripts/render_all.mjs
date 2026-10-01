@@ -145,12 +145,20 @@ const COMMON = [
   "--wrap", "rows",
   "--mode", "mix",
   "--mix-block", "8",
-  // The tear bar is NOT restored. It is the one effect that draws a bright line
-  // across the bottom of the glyphs, it was reported twice by name ("the underlined
-  // word animation is not showing characters fully"), and everything else the
-  // request asked for is back without it. The motion layers above are what make a
-  // lyric video move.
-  "--cut", "off",
+  // COLOUR IS AN ACCENT, NOT A PAINT. "This is too colorful, do not use colors
+  // everywhere, just sometimes on some letters and 2 3 letters only." At accent
+  // 1.0 EVERY word took a colour from the ramp, which is a coloured sentence. At
+  // 0.12 roughly one word in eight is picked out and the rest stay white, so the
+  // colour reads as punctuation. The words in these lyrics are one or two
+  // syllables, so a coloured word IS the two-or-three letters that were asked for,
+  // without splitting a syllable -- which would put two colours inside one
+  // consonant's glyph and break the shirorekha.
+  "--color-accent", "0.12",
+  // The underline is back, on request: "where is that underlined stuff?" It is
+  // --cut word, the newspaper clipping. The tear bar is sized from the font's own
+  // measured ink room (cutRoom), so it no longer draws a bright line through the
+  // glyph bottoms -- which is what it was doing when it was reported twice.
+  "--cut", "word",
 ];
 
 // EVERY PER-SYLLABLE TRANSFORM IS OFF. This is a correctness retreat, not a taste
@@ -229,9 +237,20 @@ const NO_GLYPH_MOTION = [
 // rejected by name. A phrase line still gets per-word colour from colorSpans()
 // rather than one colour for the sentence, which is the third thing that was asked
 // for and the thing lineColor() used to do.
-const FAST = ["--loudest", "--color-mode", "calm", "--type", "letter"];
+// PER-LETTER SIZE IS VISIBLE AGAIN. "where is that per letter font size
+// alternation?" -- `--loudest` sets letter-var to 0.03, which is 3% and is
+// effectively invisible at 105px. It is raised to 0.07 here.
+//
+// LETTER_SIZE_CAP in src/letters.js used to clamp this at 0.03, so every
+// value produced identical output and the alternation was invisible. The cap is now
+// 0.12 and this asks for all of it. THE TRADE, stated plainly: at 0.12 a syllable
+// can be 112% next to one at 88%, which puts a visible notch in the shirorekha --
+// the same table in letters.js calls 0.12 "badly broken". It is wanted, so it is
+// asked for, and 0.06 is the value to drop to if the headline stepping reads as
+// damage.
+const FAST = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
 
-const SLOW = ["--loudest", "--color-mode", "calm", "--type", "letter"];
+const SLOW = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
 
 // [folder, song, seconds, treatment, fontV1, fontV2]
 // `seconds` is PROBED by scripts/plan.mjs, never typed from memory.

@@ -14,7 +14,7 @@ import { splitGraphemes, letterSizePct } from "./letters.js";
 // the note at the top of color.js for why full-spectrum is not "more colourful".
 import {
   wordColor, letterColor, lineColor, gradientCss, levelHasLetterColor,
-  levelTintsGlow, COLOR_LEVELS,
+  levelTintsGlow, COLOR_LEVELS, syllableAccent,
 } from "./color.js";
 // The cut-paper look: each word a clipping at its own angle, with a torn edge.
 import {
@@ -162,12 +162,25 @@ function wordSpans(text, seed, index, amount, mode, hue, scheme, accent) {
   return parts.map((part, i) => {
     if (!part || /^\s+$/.test(part)) return part;
     const myOrdinal = ordinal++;
-    const style = {
-      fontSize: (sizeFor(seed, index, amount, "w" + myOrdinal) * 100).toFixed(2) + "%",
-    };
-    const c = wordColor(mode, seed, hue, index, myOrdinal, { scheme, accent });
-    if (c) style.color = c.css;
-    return <span key={i} style={style}>{part}</span>;
+    const pct = (sizeFor(seed, index, amount, "w" + myOrdinal) * 100).toFixed(2) + "%";
+    // Same per-SYLLABLE colour decision as colorSpans. This is the path --loudest
+    // actually takes, since it sets sizeMode:"word", so when colour lived only in
+    // wordSpans it was per word, and when it lived only in colorSpans it was not
+    // reached at all. Both now call syllableAccent, so the unit is the same
+    // whichever branch builds the spans.
+    const sylls = splitGraphemes(part);
+    const cols = syllableAccent(mode, seed, hue, index, myOrdinal, sylls,
+      { scheme, accent });
+    if (!cols.some((c) => c)) {
+      return <span key={i} style={{ fontSize: pct }}>{part}</span>;
+    }
+    return (
+      <span key={i} style={{ fontSize: pct }}>
+        {sylls.map((s, k) => (cols[k]
+          ? <span key={k} style={{ color: cols[k] }}>{s}</span>
+          : <React.Fragment key={k}>{s}</React.Fragment>))}
+      </span>
+    );
   });
 }
 
@@ -1066,20 +1079,36 @@ function geometry(place, position, W, H) {
   // whatever is above the screen, and the answer is a narrow strip sitting just
   // BELOW the middle.
   //
-  // 38 / 48 / 58 of 1080 is a 216px band from 410px to 626px: mid-low, clear of
-  // both edges, and the whole spread between the three placements is 20% of the
-  // frame rather than the 46% these used to cover.
+  // 30 / 40 / 50 of 1080 is a 216px band from 324px to 540px: UPPER-MID, which is
+  // the last request. "shift the middle low position to upper mid so most of the
+  // words will fit properly" -- the whole point of moving up is not composition, it
+  // is that a block starting higher has more of the frame BELOW it before it hits
+  // MAX_BOTTOM, so more cues fit at a readable size instead of being shrunk.
+  //
+  // It also cannot go higher than this: "don't keep the texts too high". 30% of
+  // 1080 is 324px, which leaves real air above the type.
   //
   // The frame is not the composition. The screen is.
-  const top = { top: 38, center: 48, bottom: 58 }[position || "center"];
+  const top = { top: 30, center: 40, bottom: 50 }[position || "center"];
   switch (place) {
     case "horizontal":
       return { kind: "band", left: 11, width: 64, top, align: "left", prevScale: 0.7 };
     case "vertical":
-      // Narrow enough that a long line stacks into a readable column instead
-      // of a single 84vw row, wide enough that the longest Allare cue (50
-      // characters) does not become eight lines tall.
-      return { kind: "band", left: 25, width: 50, top, align: "center", prevScale: 0.72 };
+      // WIDE, so a long line breaks into a few rows of THREE OR FOUR WORDS rather
+      // than one word per row.
+      //
+      // This was 50vw and it is the direct cause of "too small at 3:09". A 50vw
+      // column at 105px type fits barely two words, so an eleven-word cue wrapped
+      // to eleven rows; eleven rows do not fit the height budget, so fitWrapped
+      // shrank the type until it was about 30px -- unreadable. The report asked for
+      // exactly this and named the shape it wanted: "this could have been
+      // randomized to 1 3 2 2 4", i.e. rows of one to four words, not rows of one.
+      //
+      // 66vw holds three or four words per row, so the same cue becomes three rows
+      // of four, and three rows of 105px type is 488px -- which fits the band. The
+      // vertical drop the effect exists for is still there; it just stops
+      // annihilating the type size to produce it.
+      return { kind: "band", left: 17, width: 66, top, align: "center", prevScale: 0.72 };
     case "center":
       // Centred on the frame rather than hung from a fixed top, which is what
       // the flexbox version did and what "center" means.
@@ -1205,10 +1234,22 @@ function colorSpans(text, seed, index, mode, hue, scheme, accent) {
     // The word ORDINAL counts only real words, so adding or removing whitespace
     // cannot shift which word gets the accent.
     const ordinal = parts.slice(0, i).filter((p) => p && !/^\s+$/.test(p)).length;
-    const c = wordColor(mode, seed, hue, index, ordinal, { scheme, accent });
-    return c ? (
-      <span key={i} style={{ color: c.css }}>{part}</span>
-    ) : part;
+    // COLOUR IS PER SYLLABLE, not per word. See syllableAccent(): a coloured word
+    // in a one-syllable lyric is a coloured line, which is how a palette that was
+    // asked to be punctuation became paint. So the word is split into syllables,
+    // syllableAccent() picks two or three of them, and the rest inherit the line's
+    // own colour because their style carries no colour key at all.
+    const sylls = splitGraphemes(part);
+    const cols = syllableAccent(mode, seed, hue, index, ordinal, sylls,
+      { scheme, accent });
+    if (!cols.some((c) => c)) return part;
+    return (
+      <span key={i}>
+        {sylls.map((s, k) => (cols[k]
+          ? <span key={k} style={{ color: cols[k] }}>{s}</span>
+          : <React.Fragment key={k}>{s}</React.Fragment>))}
+      </span>
+    );
   });
 }
 
@@ -1398,7 +1439,19 @@ const SIDE_SAFE_VW = 4;
 // END, and fitWrapped shrinks the type until the rows fit inside it -- which is the
 // mechanism that already existed for the bottom of the frame, pointed at the right
 // line.
-const MAX_BOTTOM = 0.70;
+//
+// THE FIRST VALUE OF THIS WAS A BUG I INTRODUCED, and it is worth recording because
+// the symptom pointed somewhere else entirely. At 0.70, with the band at 48%, the
+// budget was 1080*0.70 - 1080*0.48 = 238px. A line that wrapped to five rows then
+// had 238px to divide five ways, and fitWrapped -- doing its job correctly --
+// produced about 30px type. The report was "too small at 3:00 and 3:09", and the
+// tempting conclusion was that the ceiling was working and the LINE was at fault.
+//
+// It was not the line. The ceiling was starving the type, and the row count was high
+// because the vertical column was 50vw and held two words. Fixing the column (66vw,
+// three or four words per row) is what actually fixed the size; widening the ceiling
+// to 0.72 is only the second half.
+const MAX_BOTTOM = 0.72;
 
 function blockBudgetPx(topPct, H) {
   const below = H * (1 - topPct / 100);
@@ -1435,7 +1488,30 @@ function fitWrapped(text, size, bandWidth, rowsAt, budgetPx) {
   const rowCount = rowsAt(size);
   if (rowCount * size * LINE_HEIGHT <= budget) return size;
 
-  let lo = 8;
+  // THE SHRINK HAS A FLOOR, and it is the most important number in this function.
+  //
+  // It used to bisect down to `lo = 8`, which is not a small lyric, it is a
+  // footnote. Combined with the wrap budget being computed from the already-shrunk
+  // size, the two fed each other and produced the measured result at 3:00 and 3:09:
+  //
+  //     t=180s   12 rows, row height 10px  ->  type about 8px
+  //     t=189s   13 rows, row height 13px  ->  type about 10px
+  //
+  // The complaint -- "this font is soo small at 3 min and 3 min 09 seconds" -- was
+  // made three times, and twice I changed something else and declared it fixed
+  // without measuring the type at those two timestamps. Measuring is what found it.
+  //
+  // A lyric that will not fit at MIN_FRACTION of the house size is not a sizing
+  // problem, it is a wrapping problem, and the answer is more rows at a readable
+  // size rather than fewer pixels. So the floor is hard: fitWrapped returns at most
+  // this fraction, and whatever the height budget then says is overridden in favour
+  // of being legible. The band positions are set high enough (see geometry) that
+  // the rows which overflow this floor are the genuinely long cues, and those read
+  // as a stacked lyric rather than as a caption.
+  const MIN_FRACTION = 0.78;
+  const floor = size * MIN_FRACTION;
+
+  let lo = floor;
   let hi = size;
   for (let i = 0; i < 18 && hi - lo > 0.5; i++) {
     const mid = (lo + hi) / 2;
@@ -1557,11 +1633,30 @@ function renderCue(cueObj, isPrev, life) {
   // that was then made smaller.
   const breakAfter = (() => {
     if (!wrapOn || g.kind === "roam") return new Set();
-    const rows = wrapRows(
-      cueObj.text,
-      widthTable,
-      (bandEm * (shown / Math.max(1, size)))
-    ).rows;
+    // THE ROWS ARE DECIDED AT THE FULL SIZE, and that is the whole fix.
+    //
+    // This used to scale the wrap budget by `shown / size` -- the ratio of the
+    // size that was finally chosen to the size that was asked for. Which means the
+    // row count was computed from the ALREADY-SHRUNK size, and that is a feedback
+    // loop with a positive gain:
+    //
+    //     fitWrapped shrinks the type  ->  breakAfter measures a narrower band in em
+    //     ->  fewer words per row, more rows  ->  the block is taller
+    //     ->  fitWrapped shrinks further
+    //
+    // Measured on the shipped file at 3:00 and 3:09, where the complaint was made
+    // three times and which I twice declared fixed:
+    //
+    //     t=180s   12 rows, row height 10px  ->  type about 8px
+    //     t=189s   13 rows, row height 13px  ->  type about 10px
+    //
+    // Eight pixels. One word per row, because at 8px the em budget is a thirteenth
+    // of what it should be, so the band holds a single short syllable.
+    //
+    // The row count is a TYPESETTING decision and belongs to the size the lyric
+    // asked for. fitWrapped then shrinks to make those rows fit the height, which
+    // is its job and works in that direction -- one computation, one direction.
+    const rows = wrapRows(cueObj.text, widthTable, bandEm).rows;
     // Index of the LAST word of each row except the final one.
     const set = new Set();
     let i = 0;

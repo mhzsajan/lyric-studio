@@ -724,8 +724,65 @@ export function letterColor(level, seed, baseHue, cueIndex, wordIndex, letterInd
            css: hslCss(hue, sat, light), rgb: hslRgbTriple(hue, sat, light) };
 }
 
-/** Whether a level paints letters as well as words. Used to decide span nesting. */
-export function levelHasLetterColor(level) {
+/**
+ * Which SYLLABLES of a word carry the accent colour, and which are white.
+ *
+ * THE UNIT IS THE LETTER, NOT THE WORD, and it was the word for a long time. The
+ * request was "randomize it per letter not whole song", and before this the palette
+ * was dealt to whole words: a coloured word is a coloured WORD, which in a lyric
+ * one or two syllables long is most of the line, and a line of those is a video
+ * that is coloured all the way through.
+ *
+ * So the decision is per syllable and it is deliberately SMALL:
+ *
+ *   - with probability `accent`, the word is left entirely white. At the shipped
+ *     0.12 that is 88% of words, which is what makes the colour punctuation rather
+ *     than paint.
+ *   - otherwise a run of TWO OR THREE consecutive syllables is coloured, starting
+ *     at a seeded position. A run rather than a scatter, because a syllable is the
+ *     unit the shirorekha is drawn across: colouring two non-adjacent syllables puts
+ *     two colours inside one word's headline, which is the gotcha-8 damage in
+ *     colour form.
+ *   - never more than three, and never zero syllables of an accented word -- a
+ *     one-letter flash of colour in the middle of a word reads as a typo.
+ *
+ * Returns an array parallel to `syllables`: null for white, a css string for the
+ * accent. Null rather than a white css so the caller can leave the style key off
+ * entirely and inherit the line's own colour.
+ */
+export function syllableAccent(level, seed, hue, cueIndex, wordIndex, syllables, opts) {
+  const n = syllables.length;
+  const out = new Array(n).fill(null);
+  if (!n) return out;
+  const L = LEVELS[level];
+  if (!L) return out;
+
+  const scheme = (opts && opts.scheme) || "rainbow";
+  const accent = opts && Number.isFinite(opts.accent)
+    ? Math.min(Math.max(opts.accent, 0), 1) : 0.12;
+
+  // Most words are untouched. Drawn per word so a given song accents the same
+  // words on every render and in both versions of a song.
+  const skip = unit(`${seed}:C${cueIndex}:w${wordIndex}:syllable-accent`, 0);
+  if (skip > accent) return out;
+
+  // TWO OR THREE, clamped to what the word actually has.
+  const want = 2 + Math.floor(unit(`${seed}:C${cueIndex}:w${wordIndex}:run`, 0) * 2);
+  const run = Math.min(want, n);
+  if (run < 1) return out;
+  const start = Math.floor(
+    unit(`${seed}:C${cueIndex}:w${wordIndex}:start`, 0) * (n - run + 1));
+
+  for (let k = 0; k < run; k++) {
+    const c = wordColor(level, seed, hue, cueIndex, wordIndex, {
+      scheme, accent: 1, syllable: start + k,
+    });
+    if (c && !c.white) out[start + k] = c.css;
+  }
+  return out;
+}
+
+/** Whether a level paints letters as well as words. Used to decide span nesting. */export function levelHasLetterColor(level) {
   const L = LEVELS[level];
   return !!(L && L.step);
 }

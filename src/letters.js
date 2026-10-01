@@ -50,16 +50,30 @@ export function splitGraphemes(text) {
 // and inspecting the headline at 3x zoom:
 //
 //   0     one continuous bar (control)
-//   0.03  bar still continuous, letters differ subtly      <- safe ceiling
+//   0.03  bar still continuous, letters differ subtly
 //   0.05  bar starts to separate
 //   0.08  bar clearly broken into segments
 //   0.12  bar badly broken, the word looks damaged
 //
 // The failure is very visible because the shirorekha is the single strongest
-// horizontal feature in the glyph. 0.12 was the first guess here and it was
-// wrong; 0.05 is already enough to read as a mistake. 0.03 gives texture with
-// the headline intact.
-export const LETTER_SIZE_CAP = 0.03;
+// horizontal feature in the glyph.
+//
+// IT WAS 0.03, and that is why the per-letter size alternation appeared to be
+// missing. The cap CLAMPS -- `Math.min(amount, LETTER_SIZE_CAP)` -- so
+// --letter-var 0.07, 0.12, 0.18 and 0.25 all produced byte-identical output at
+// +/-3%, and no flag could raise it. The complaint was "where is per letter size
+// alternation?? like Najau word have 3 letters and where is its 3 word size
+// alternation where na will look bigger than ja and uu looks bigger too", and the
+// honest answer was that the feature was pinned out of reach and nothing in the
+// code said so at the call site.
+//
+// It is now 0.12: enough that neighbouring syllables are plainly different sizes,
+// which is what was asked for, and the value this file's own table calls "badly
+// broken". Those two things are the same fact. The headline will step, and at 0.12
+// it steps a lot -- a syllable at 112% next to one at 88% puts a visible notch in
+// the bar. That is the trade, it is the one this table measured, and it is now a
+// number that can be changed rather than a ceiling that cannot.
+export const LETTER_SIZE_CAP = 0.12;
 
 /**
  * How a letter's size differs from its parent word.

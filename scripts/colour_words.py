@@ -45,6 +45,7 @@ def main():
     video = sys.argv[1]
     times = sys.argv[2:]
     worst = []
+    all_white = []
     print("")
     print("  %-9s %6s %8s  %s" % ("t", "words", "colours", "per-word hue"))
     print("  " + "-" * 74)
@@ -99,21 +100,37 @@ def main():
             hues.append("white" if hh is None else str(hh))
 
         distinct = sorted(set(h for h in hues if h != "white"))
+        if hues and all(h == "white" for h in hues):
+            all_white.append(t)
         print("  %-9s %6d %8d  %s" % (t + "s", len(words), len(distinct),
                                       " ".join(hues)))
-        if len(words) >= 3 and len(distinct) <= 1:
+        # A FAULT is every word carrying the SAME chroma -- no white anywhere. One
+        # accent among white words is the design, not the fault, and the first
+        # version of this flagged it because it counted hues without counting
+        # whites, so "one accent in a white line" read as "one colour".
+        if len(words) >= 2 and len(distinct) == 1 and len(distinct) == len(hues):
             worst.append((t, len(words)))
 
     print("")
     if worst:
-        print("  LINES THAT CAME OUT A SINGLE COLOUR:")
+        print("  LINES THAT CAME OUT A SINGLE CHROMA HUE (the fault):")
         for t, n in worst:
             print("    t=%ss  %d words, 1 hue" % (t, n))
         print("")
-        print("  That is the fault: a line is one object, and colouring all of it")
-        print("  is a coloured sentence rather than an accent inside a lyric.")
+        print("  A coloured line is a coloured sentence, not an accent inside a lyric.")
     else:
-        print("  no sampled line is a single colour.")
+        print("  no sampled line is entirely one chroma colour.")
+    # A line that is entirely WHITE is the CORRECT result and used to be reported as
+    # the fault by this script, which was correct at the time and is wrong now. The
+    # unit of colour is the syllable and most syllables are white by design, so
+    # "one colour" and "one HUE" stopped being the same measurement when
+    # syllableAccent() landed. Reporting a white line as a fault would send the next
+    # person to add colour back to fix a complaint about too much colour.
+    allwhite = [t for t in times
+                if t in all_white]
+    if allwhite:
+        print("  lines that are entirely white (CORRECT -- colour is an accent): %s"
+              % ", ".join(allwhite))
     print("")
 
 
