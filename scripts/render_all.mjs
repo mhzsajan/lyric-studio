@@ -126,128 +126,79 @@ const COMMON = [
   // words at luma 51 shipped broken. They keep their hue and saturation and lose
   // their darkness, so oxblood becomes a deep red rather than oxblood. Dropping
   // them would have honoured the names and lost the words.
+  // ONE VALUE PER FLAG IN THIS TABLE, and that is a rule rather than a style.
+  //
+  // This list carried `--color-accent 1` AND `--color-accent 0.12`, and `--cut word`
+  // AND `--cut off`, and `--letter-var 0` in COMMON while FAST and SLOW passed 0.12.
+  // render.mjs takes the last occurrence, so the batch was shipping the values that
+  // happened to be written last -- which were not the ones the comments above them
+  // described, and not the ones the approved Allare render was made with.
+  //
+  // That is the same shape as the two-font-table bug, and the same shape as the
+  // un-threaded cutRoom: the file was EDITED correctly and the thing that RUNS took
+  // a different value. A duplicate flag is invisible in a diff and decisive at
+  // render time. check_flags_once.mjs now fails the build on a repeat.
+  //
+  // COLOUR IS AN ACCENT, NOT A PAINT. "This is too colorful, do not use colors
+  // everywhere, just sometimes on some letters and 2 3 letters only." At accent 1.0
+  // every word took a colour from the ramp, which is a coloured sentence. At 0.12
+  // roughly one word in eight is picked out and the rest stay white. Seeded per
+  // word, so the same words are accent words on every re-render.
+  //
+  // THE PALETTE: the warm ramp -- gold, yellow, amber, orange, orange-red,
+  // vermilion, red, coral red, crimson, carmine -- dealt at random per word. Red
+  // words are the dark end of a warm ramp, which is exactly where legibility dies,
+  // so the dark entries are lifted to the floor and the report says how many.
+  //
+  // Random is SEEDED, so the same song picks the same words in the same colours on
+  // every render. A version that moved its colours would not be the same song twice.
   "--color-scheme", "warm",
   "--color-hue", "0",
-  "--color-accent", "1",
-  // HOW OFTEN a word takes the red. Measured over Kali Kali's 48 cues: at 1.0
-  // exactly 50% of words are red, which is a COLOURED SENTENCE with white in it.
-  // At 0.35 it is ~15% of words and about half the lines carry one accent -- so a
-  // line is usually one word picked out, sometimes none, and never a block of
-  // colour. Seeded per word, so the same words are accent words in both versions
-  // of a song and on every re-render.
+  "--color-accent", "0.12",
   "--scanlines", "40",
   "--scanline-alpha", "0.06",
   "--shadow", "0 3px 16px rgba(0,0,0,0.85)",
   // A long line breaks into rows at full size instead of being shrunk to fit one
-  // row, and each line's horizontal placement varies per cue. Both are on by
-  // default in render.mjs; they are named here so that "identical apart from the
-  // font" is checkable against this file rather than against a memory of it.
+  // row. Named here so that "identical apart from the font" is checkable against
+  // this file rather than against a memory of it. --x-pos is NOT set: it moved a
+  // settled line sideways between cues and read as a shake.
   "--wrap", "rows",
   "--mode", "mix",
   "--mix-block", "8",
-  // COLOUR IS AN ACCENT, NOT A PAINT. "This is too colorful, do not use colors
-  // everywhere, just sometimes on some letters and 2 3 letters only." At accent
-  // 1.0 EVERY word took a colour from the ramp, which is a coloured sentence. At
-  // 0.12 roughly one word in eight is picked out and the rest stay white, so the
-  // colour reads as punctuation. The words in these lyrics are one or two
-  // syllables, so a coloured word IS the two-or-three letters that were asked for,
-  // without splitting a syllable -- which would put two colours inside one
-  // consonant's glyph and break the shirorekha.
-  "--color-accent", "0.12",
   // The underline is back, on request: "where is that underlined stuff?" It is
   // --cut word, the newspaper clipping. The tear bar is sized from the font's own
   // measured ink room (cutRoom), so it no longer draws a bright line through the
   // glyph bottoms -- which is what it was doing when it was reported twice.
   "--cut", "word",
 ];
-
-// EVERY PER-SYLLABLE TRANSFORM IS OFF. This is a correctness retreat, not a taste
-// decision, and the reason is specific.
+// EVERY ANIMATION AND STYLE IS ON, with the faults fixed at the source rather than
+// worked around by switching layers off. The three that were reported:
 //
-// The report was: "all the upper section of this text, तिमीले becomes तमाला" and
-// "texts that have lower characters, मायालु becomes mayal" -- and then, decisively,
-// "not everywhere but at certain sections of the song, half way correct and half
-// way not". Losing BOTH the above-matras (ी े ै) and the below-matras (ु ू), in
-// SOME sections only, is one fault and not two: something is altering the glyphs
-// between syllables, so the parts that stick out past a consonant lose their
-// attachment and the word reads as a different word.
+//   1. the below-matra crop. LINE_HEIGHT was 1.32, shorter than the faces are tall
+//      (1.6-1.8em from an above-matra to a ु), so a glyph overflowed its own line
+//      box and the crop landed on the descender. Now one constant, 1.55, plus
+//      padding under the last row.
+//   2. text touching the frame edge. A band's `left` may be 0vw, and at 1:53 the
+//      ink began at exactly x=0. SIDE_SAFE_VW guarantees 4vw on BOTH sides.
+//   3. the shaking. --x-pos moved a settled line sideways between cues; with the
+//      motion layers on, the line already has life, so it was redundant as well as
+//      jittery. The band SHAPES from --mix-block stay: they change every 8 cues and
+//      read as variety rather than as flicker.
 //
-// RULED OUT BY MEASUREMENT, not by reasoning:
-//   - the font. fontTools says the ink for these strings is 0.98em above the
-//     baseline and 0.30em below, and the rendered block is 131px for a 105px font
-//     against 135px needed. Nothing is clipped and no matra is absent from the face.
-//   - the frame edge. 24 sampled frames, every one of them 450-600px clear of the
-//     top and 330-500px clear of the bottom. scripts/bbox_report.py measures it.
-//   - grapheme splitting. splitGraphemes("दुईतर्फी") is ["दु","ई","त","र्फी"] -- the
-//     conjunct र्फ and the ी matra are both intact inside one cluster.
-//   - per-word and per-letter SIZE. --size-var 0 --size-drift 0 --letter-var 0
-//     --size-mode off changed nothing; the fault is still there.
-//   - the tear bar, which is at the BOTTOM and was already fixed.
+// COLOUR IS PER SYLLABLE, NOT PER WORD. syllableAccent() picks a run of two or
+// three consecutive syllables on about one word in eight, so the colour is
+// punctuation. `--color-mode calm` paints words only; `vivid` and above step the
+// hue ACROSS a word, which is the "fading" that was rejected by name.
 //
-// So the remaining suspects are the layers that transform a syllable relative to
-// its neighbours: --cut, --type, --depth, --motion, --word-anim, --letter-anim.
-// Devanagari's shirorekha is continuous across a word, which is why this repo has
-// an entire rule about it (gotcha 8) -- and every one of those layers is a
-// per-syllable transform wearing a licence to move ink.
+// PER-LETTER SIZE IS ASKING FOR EVERYTHING THE CAP ALLOWS. --loudest sets
+// letter-var to 0.03, which is invisible at 105px. LETTER_SIZE_CAP in
+// src/letters.js used to clamp it at 0.03, so every value produced identical
+// output; the cap is now 0.12 and this asks for all of it.
 //
-// Given a deadline, the right move is to ship what is PROVEN correct and add
-// effects back one at a time, each verified by eye, rather than ship a treatment
-// that mangles words. What survives below is everything that does not touch glyph
-// geometry: the four Unicode faces, the rows wrap, the x-pos variety, the mix band
-// shapes, the red/white duo at the corrected luminance floor, and the scanlines.
-//
-// To put a layer back, add it to FAST or SLOW and re-render ONE song, then look at
-// a magnified crop of a word with a pre-base i-matra and a below-matra -- दुईतर्फी
-// and मायालु are the two that exposed this, so they are the two to check.
-const NO_GLYPH_MOTION = [
-  // One size for every glyph in the frame. See above for why this is not optional.
-  "--size", "105",
-  "--size-var", "0",
-  "--size-drift", "0",
-  "--letter-var", "0",
-  "--size-mode", "off",
-  // Nothing that moves or clips a syllable relative to its neighbours.
-  "--cut", "off",
-  "--type", "off",
-  "--depth", "off",
-  "--motion", "off",
-  "--word-anim", "off",
-  "--letter-anim", "off",
-];
-
-// FAST and SLOW now differ only in which colour level paints, and per-letter
-// colour is off in both because `--color-mode vivid` steps hue ACROSS a word --
-// which is a per-letter transform, and is under the same suspension as the rest.
-// EVERY ANIMATION AND STYLE IS BACK, on request, with the three faults fixed at the
-// source rather than switched off:
-//
-//   1. the below-matra crop  -- LINE_HEIGHT 1.32 -> 1.55, one constant instead of
-//      five copies of the literal, plus padding under the last row. 1.32 was
-//      shorter than the faces are tall, so a ु was cropped by its own line box.
-//   2. text touching the frame edge -- SIDE_SAFE_VW guarantees 4vw on both sides.
-//      At 1:53 the ink began at x=0.
-//   3. the shaking -- --x-pos is what moved a settled line sideways between cues,
-//      and with the motion layers restored the line already has life, so the
-//      horizontal jump was redundant as well as jittery. The band SHAPES from
-//      --mix-block stay, because those change every 8 cues and read as variety
-//      rather than as flicker.
-//
-// COLOUR IS PER WORD. --color-mode calm paints words only; `vivid` and above step
-// the hue ACROSS a word, letter by letter, and that is the "fading" that was
-// rejected by name. A phrase line still gets per-word colour from colorSpans()
-// rather than one colour for the sentence, which is the third thing that was asked
-// for and the thing lineColor() used to do.
-// PER-LETTER SIZE IS VISIBLE AGAIN. "where is that per letter font size
-// alternation?" -- `--loudest` sets letter-var to 0.03, which is 3% and is
-// effectively invisible at 105px. It is raised to 0.07 here.
-//
-// LETTER_SIZE_CAP in src/letters.js used to clamp this at 0.03, so every
-// value produced identical output and the alternation was invisible. The cap is now
-// 0.12 and this asks for all of it. THE TRADE, stated plainly: at 0.12 a syllable
-// can be 112% next to one at 88%, which puts a visible notch in the shirorekha --
-// the same table in letters.js calls 0.12 "badly broken". It is wanted, so it is
-// asked for, and 0.06 is the value to drop to if the headline stepping reads as
-// damage.
+// THE TRADE, stated plainly: at 0.12 a syllable can be 112% beside one at 88%,
+// which puts a visible notch in the shirorekha -- the table in letters.js calls
+// 0.12 "badly broken". It is wanted, so it is asked for. 0.06 is the value to drop
+// to if the headline stepping reads as damage.
 const FAST = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
 
 const SLOW = ["--loudest", "--color-mode", "calm", "--type", "letter", "--letter-var", "0.12"];
