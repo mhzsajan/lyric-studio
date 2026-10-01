@@ -1504,10 +1504,23 @@ async function run(audioPath, lrcPath) {
     const { titleWordFlags } = await import("./src/title.js");
     let cuesWith = 0;
     let hits = 0;
-    for (const c of (props.cues || [])) {
+    // THE CUES COME FROM `parsed`, NOT FROM props.cues, and that is the whole
+    // reason the first version of this block printed a WARNING on a song whose
+    // lyric plainly contains the title word. props.cues is filled in by Root.jsx,
+    // from lyrics.generated.js, at RENDER time -- so at report time it is an empty
+    // array, the loop below iterated over nothing, and the report said "that title
+    // word is in NO cue" about a line reading:
+    //
+    //     हो... मोहनीको बाटो जादै नजाने म परेँ अल्लारे
+    //
+    // which contains it. `parsed` is the same parse this script already ran for its
+    // own cue report, twenty lines earlier in the same function, so it is populated
+    // and it is the same data the composition will get.
+    for (const c of (parsed.cues || [])) {
       const n = titleWordFlags(c.text, words).filter(Boolean).length;
       if (n) { cuesWith++; hits += n; }
     }
+    const totalCues = (parsed.cues || []).length;
     console.log("  title  : " + (override
       ? "--title-word " + words.join(", ")
       : (lrcTitle || "(none found in the .lrc)")));
@@ -1521,7 +1534,7 @@ async function run(audioPath, lrcPath) {
       console.log("             --title-word \"<the word as it appears in the lyric>\"");
     } else {
       console.log("           fires on " + hits + " word(s) across " + cuesWith +
-        " of " + (props.cues || []).length + " cues");
+        " of " + totalCues + " cues");
     }
   }
 
