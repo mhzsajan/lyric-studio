@@ -238,6 +238,20 @@ per-*syllable* transform detaching a matra; an effect that only adds **paint** c
 reintroduce it. The one geometric property set is a per-**word** font-size, which is
 safe because a word is a single span.
 
+**IT IS APPLIED IN `animatedWords()`, AND THAT IS THE WHOLE LESSON.** The highlight
+was written into `wordSpans()` and `colorSpans()` — the `spans === false` branches.
+Every render in this batch goes through `animatedWords()`, the `spans === true` one,
+because `spans` is true whenever word **or** letter animation is on and `--loudest`
+turns both on. So the feature was **dead in all seven delivered videos** while
+`check_title.mjs` was green and the report said *"fires on 96 words across 32 of 74
+cues"*. Both were true: the matcher is a pure function and it was correct; the bug
+was in which caller ran.
+
+`check_title_render.mjs` exists for this and only this: it renders the same frame
+twice and requires the pixels to differ. **Proven able to fail** — with the threading
+removed it reports *"the two stills are BYTE-IDENTICAL"* and `check_title.mjs` still
+passes. See gotcha 49.
+
 **The report is on every run and it fails loudly.** A matcher that finds nothing looks
 exactly like a feature nobody implemented, which is worse than a crash:
 
@@ -304,7 +318,7 @@ damage. The trade is a number that can be changed, not a ceiling that cannot.
 | understand the pipeline / what fails it | [docs/PIPELINE.md](docs/PIPELINE.md) |
 | animate text — every layer and value | [docs/ANIMATION.md](docs/ANIMATION.md) |
 | pick a font that is **proven** on this song | `..\nepali-legacy-fonts\verdicts.json` — **the font repo owns this.** This repo holds no font facts and must never grow a copy; read it through `scripts/font_ref.mjs` |
-| know what went wrong here, 47 times | [docs/GOTCHAS.md](docs/GOTCHAS.md) |
+| know what went wrong here, 49 times | [docs/GOTCHAS.md](docs/GOTCHAS.md) |
 | match the reference video's look | [docs/REFERENCE.md](docs/REFERENCE.md) |
 | build the ṚITU full-frame piece | [docs/RITU.md](docs/RITU.md) — the design, the lyric analysis, and the locked settings |
 | why Remotion, and its traps | [docs/PLAYBOOK.md](docs/PLAYBOOK.md) |
@@ -356,10 +370,10 @@ node scripts\check_all.mjs      # every self-contained suite. This is the comman
 node scripts\check_all.mjs --song "G:\...\song.lrc"   # also the two song tools
 ```
 
-There are **28** check scripts, in three kinds. Only the first kind must be
+There are **29** check scripts, in three kinds. Only the first kind must be
 green before you commit, and `check_all.mjs` runs all of it:
 
-**1. Self-contained suites (22 + smoke)** — pure functions of the source; no render, no
+**1. Self-contained suites (23 + smoke)** — pure functions of the source; no render, no
 font, no audio. Seconds each, and every one has caught a real bug here.
 
 | | guards |
@@ -373,7 +387,8 @@ font, no audio. Seconds each, and every one has caught a real bug here.
 | `check_typing.mjs` | the typed-on reveal: **the delay chain finishes inside every cue's span**, including the pathological ones (a 40-letter line in 0.5 s). A typing reveal is nothing but letters arriving late, which is the exact shape of the lingering-lyric bug. Also walks the **real** word layer rather than a copied model of it |
 | `check_wrap.mjs` | a long lyric line becomes **rows at full size**, not one shrunken row: balanced rather than greedy, and **never split inside a word** — Devanagari's shirorekha is continuous across a word, so a break inside one snaps the headline (gotcha 8). Runs a deliberately greedy and a deliberately word-splitting breaker and requires the assertions to reject both |
 | `check_camera.mjs` | the ṚITU piece's fall is **monotonic across all 7530 frames**. It is invisible in any single frame and load-bearing across four minutes: the frame where the scale decreases is the frame where the camera has arrived, which is the one thing the song refuses. Also that the instrumental breaks fall *faster* than the sung stanzas, and that the beat grid moves the **camera only** |
-| `check_title.mjs` | the **title-word highlight**: that it fires on the title and on NOTHING else, which is the assertion that has value — a substring match would light up every word that merely *contains* the title word. Also that the title's punctuation is stripped (`"अल्लारे,"` has a comma the lyric does not, and without stripping the feature silently matches nothing and looks unimplemented), that both scripts can be supplied at once, and that the glow is a `textShadow` with **no filter and no transform** — every bug this project lost a day to was a per-syllable *transform* detaching a matra, so the highlight is deliberately paint-only |\n| `check_typo.mjs` | the five advanced-typography techniques (`src/typo/`): **finite** across 825 calls including `q = NaN` — a NaN transform does not draw the character, which is the disappearing-word bug through a new door; **deterministic**; **inside a declared travel contract** the code is actually held to; **readable through the body of a cue** (a technique that fades a glyph past 0.25 is deleting a letter); and **no technique owns timing** — asserted by reading the signatures, because a technique that could delay a character pushes ink past the cue's end |
+| `check_title.mjs` | the **title-word highlight**: that it fires on the title and on NOTHING else, which is the assertion that has value — a substring match would light up every word that merely *contains* the title word. Also that the title's punctuation is stripped (`"अल्लारे,"` has a comma the lyric does not, and without stripping the feature silently matches nothing and looks unimplemented), that both scripts can be supplied at once, and that the glow is a `textShadow` with **no filter and no transform** — every bug this project lost a day to was a per-syllable *transform* detaching a matra, so the highlight is deliberately paint-only |\n| `check_title_render.mjs` | **that `--title-word` changes the RENDER.** This is the check that would have caught the highlight being dead in all seven delivered videos while `check_title.mjs` stayed green. The cause: the highlight was implemented in `wordSpans()` and `colorSpans()`, the `spans === false` branches, while every render in this batch goes through `animatedWords()` — the `spans === true` one, because `spans` is true whenever word or letter animation is on and `--loudest` turns both on. The matcher was correct, the report was correct, and the feature was absent from the output. Renders the same frame twice and requires the two PNGs to differ. **Proven able to fail:** with the threading removed it reports "the two stills are BYTE-IDENTICAL", and `check_title.mjs` still passes on the same break |
+| `check_typo.mjs` | the five advanced-typography techniques (`src/typo/`): **finite** across 825 calls including `q = NaN` — a NaN transform does not draw the character, which is the disappearing-word bug through a new door; **deterministic**; **inside a declared travel contract** the code is actually held to; **readable through the body of a cue** (a technique that fades a glyph past 0.25 is deleting a letter); and **no technique owns timing** — asserted by reading the signatures, because a technique that could delay a character pushes ink past the cue's end |
 | `check_smoke.mjs` | **renders one real frame of every composition**, with every layer on. This is the only instrument that sees a **missing binding**: `typeLag` and `cutRoom` were both destructured on `LyricOverlay` and read inside `animatedWords()`, and neither was passed to it — the module *parses*, all 21 other suites pass, and Remotion reports a bare frame number with no file and no stack. `cutRoom` cost five renders. Also asserts that the in-cue frame and the empty frame are **different pictures**, because a frame at the wrong time is byte-identical to a blank plate and no size threshold can tell them apart |
 | `check_bundle.mjs` | **the tree compiles.** One missing space in a leaf of `src/ritu/` killed nine renders in a row — every render bundles `src/index.js`, so a typo in one file takes out the whole pipeline, and all 19 other suites stayed green throughout because a file that cannot *parse* is not a function anybody can call. Bundles the graph with Remotion's own loaders, so it catches what a per-file parse cannot: `RituPiece.jsx` imported `FONT_FAMILY` from a module exporting `FONT_FAMILY_NAME`, and every file parsed fine |
 | `check_animation.mjs` | word/letter pools, **the shirorekha rule**, size-drift bounds |
@@ -404,6 +419,7 @@ source instead of from the pixels, and the claim was wrong.
 
 | | what it measures | the mistake it caught |
 |---|---|---|
+| `scripts/check_title_render.mjs` | **the same frame rendered with and without `--title-word`**, and requires the pixels to differ | the highlight firing in **none** of the seven videos while the matcher suite was green. A pure-function test cannot see which caller runs — gotcha 49 |
 | `scripts/colour_words.py` | distinct hues **per word**, by segmenting a frame on column gaps | "whole lines came out white" — the unit was the word, so a coloured word in a one-syllable lyric was a coloured line. Also caught itself calling an all-white line "the fault" |
 | `scripts/band_report.py` | every sampled cue against **both** frame edges | 3:09 reached 94% of the frame after the band had been raised. "Is it centred" would have passed it |
 | `scripts/title_probe.mjs` | title-word matches for a whole folder tree, no render | three songs have an English `.lrc` title over a Nepali lyric and need `--title-word` |
@@ -412,12 +428,24 @@ source instead of from the pixels, and the claim was wrong.
 | `scripts/bbox_report.py` | a frame's ink box against the frame edges | distinguishing "text touching the edge" from "text clipped" |
 | `scripts/probe_words.mjs`, `probe_typing.mjs`, `interval_math.mjs` | how long a word is on screen, whether a letter lands late, whether a low interval count is arithmetic | the gate's blind spots, per `AGENTS.md` |
 
-**Two of these have misled me and are labelled accordingly.** `type_size.py` counts
-empty rows to find row breaks, and `--scanlines` puts ink in every row, so it reported
-1080px rows; it also samples single frames, and with `--motion` a frame mid-entrance is
-scaled down. It said 8px where the picture shows readable type. **When the instrument
-and the picture disagree, the picture wins** — and the right response is to fix the
-instrument, not to believe it.
+**Four of these have misled me and are labelled accordingly.** Two report the wrong
+quantity; two were used with two variables at once.
+
+- `type_size.py` counts empty rows to find row breaks, and `--scanlines` puts ink in
+  every row, so it reported 1080px rows; it also samples single frames, and with
+  `--motion` a frame mid-entrance is scaled down. It said 8px where the picture
+  shows readable type.
+- `colour_words.py` called an all-white line "the fault". White **is** the goal; a
+  fault is every word carrying the same chroma with no white anywhere.
+- Comparing the old video against the new one to check the title highlight **changed
+  `--type` and the title wiring at once**, so a difference was unassignable and a
+  confident per-song answer came out of it. One variable, or no answer.
+- A frame picked by eye, and a Devanagari argument passed through PowerShell, both
+  produced a **measurement that answered a different question** — a blank plate reads
+  as a dead feature, and `????` is not the title word.
+
+**When the instrument and the picture disagree, the picture wins** — and the right
+response is to fix the instrument, not to believe it.
 
 If you add a check, **prove it fails on a known-bad input first** — that is the
 habit that keeps them worth running, and `check_doc_refs.mjs` will now tell you

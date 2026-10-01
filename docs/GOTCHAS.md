@@ -51,6 +51,8 @@ chooses a font.
 46. **A NAMED COLOUR IS DATA, NOT A HUE TO RECONSTRUCT**
 47. **A PARTIAL GLYPH IS A DIFFERENT GLYPH, AND IT IS NOT A TIMING FAULT**
 48. **A DEVICE IN THE SCREENSHOT MAY NOT BE A DEVICE IN THE FILE**
+49. **A UNIT TEST OF A PURE FUNCTION CANNOT SEE WHICH CALLER RUNS**
+50. **A COMPARISON WITH TWO VARIABLES ATTRIBUTES NOTHING**
 
 ---
 
@@ -955,4 +957,57 @@ chooses a font.
     changing the file.** Two hours of `--cut` A/B, tear-bar geometry and
     mid-tone row profiles were spent establishing the absence of a box that was
     never there. Extract the frame, count the pixels, and only then edit.
+
+49. **A UNIT TEST OF A PURE FUNCTION CANNOT SEE WHICH CALLER RUNS.**
+
+    The title-word highlight was implemented in `wordSpans()` and `colorSpans()`.
+    Those are the `spans === false` branches. Every render in the delivered batch
+    goes through `animatedWords()` — the `spans === true` one — because `spans` is
+    true whenever word **or** letter animation is on, and `--loudest` turns both on.
+
+    So the highlight fired in **none of the seven videos** while
+    `check_title.mjs` was 100% green ("the title word is found exactly, marked
+    every time, and marked with paint only") and the render report said *"fires on
+    96 word(s) across 32 of 74 cues"*. Both were true. The matcher is a pure
+    function and it was correct; the bug was in which caller the composition used.
+
+    Verified rather than asserted: with the threading removed,
+    `check_title_render.mjs` fails with *"the two stills are BYTE-IDENTICAL"* and
+    `check_title.mjs` still passes on the same break.
+
+    The general rule: **a feature's test must exercise the path the product takes.**
+    If two functions can produce the output, a test of one of them is a test of a
+    function. The cheapest honest test is to render the same frame twice and require
+    the pixels to differ — 8 seconds, and it cannot pass while the feature is off.
+
+50. **A COMPARISON WITH TWO VARIABLES ATTRIBUTES NOTHING.**
+
+    The title highlight was reported as "working on two songs, broken on one". The
+    comparison was the *old video* against the *new one* — and between those two
+    files two things changed at once: `--type off` **and** the title wiring. Two
+    variables, so a difference in output was unassignable, and a difference in
+    outcome was read as a per-song result. It produced a confident, wrong answer
+    about which songs worked.
+
+    Two later attempts to check the same thing were also broken instruments, and
+    both failed in a way worth recording:
+
+    - **A frame chosen by eye.** Frame 2100 (70.0s) was assumed to be inside the
+      cue ending at 70.3s. It was not — it sat in the gap before the cue starting at
+      71.0s, and produced two blank plates. **A blank plate is byte-identical to a
+      dead feature**, so the test reported a working feature as broken. The check
+      now reads the cue's own `[start, end]` and takes the frame from it.
+    - **A non-ASCII argument through PowerShell.** The title word passed on a
+      command line arrived as `????`, so the test evaluated a different string and
+      answered a different question. The repo already says never to round-trip
+      non-ASCII through PowerShell; it did not say that a *test* can be silently
+      invalidated by it, and the result was still reported as a measurement.
+
+    And one shell assertion was itself wrong: `if (git diff --quiet f)` is FALSE
+    for a clean file, because `git diff --quiet` exits 0 and prints nothing, and
+    PowerShell reads "no output" as false. The file was fine; the test was not.
+
+    The general rule: **change one thing, and let the code pick the sample point.**
+    A hand-picked timestamp and a hand-typed string are two more variables, and
+    neither fails loudly.
 
