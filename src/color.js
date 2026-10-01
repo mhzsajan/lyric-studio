@@ -1,4 +1,4 @@
-﻿// color.js -- per-word and per-letter COLOUR, seeded, with four levels.
+// color.js -- per-word and per-letter COLOUR, seeded, with four levels.
 //
 // WHY A SEPARATE FILE
 // -------------------
@@ -108,10 +108,31 @@ const SCHEME_OFFSETS = {
 // was caught by check_color.mjs asserting the pre-scheme behaviour still worked,
 // which is the argument for asserting that an OLD behaviour still works, not just
 // that the new one does.
-const slotsFor = (scheme) =>
-  Object.prototype.hasOwnProperty.call(SCHEME_OFFSETS, scheme)
+// "duo" IS THE ANCHOR PLUS WHITE, and white is the reason it cannot express a
+// two-hue pairing. `--color-scheme duo:25` therefore reads as "the anchor, and a
+// hue 25 degrees away" -- at the default anchor of 0 that is red and orange, which
+// is a pairing no entry in SCHEME_OFFSETS describes, because a duo of two hues is
+// just an anchor and an interval and music theory has no name for the interval.
+//
+// It is encoded in the scheme STRING rather than added as a second flag on purpose.
+// `scheme` is threaded through wordColor, letterColor, linePalette, lineColor,
+// gradientCss and slotHsl, and it is also what check_color.mjs iterates. A second
+// flag would have to be added to six signatures and to every call site, and the
+// place it would be forgotten is a caller that silently falls back to white --
+// which is the exact failure this is meant to remove.
+const DUO_OFFSET = /^duo:(-?\d+(?:\.\d+)?)$/;
+
+/** Whether a scheme name is `duo` or `duo:<degrees>`. */
+export const isDuoScheme = (scheme) =>
+  typeof scheme === "string" && (scheme === "duo" || DUO_OFFSET.test(scheme));
+
+const slotsFor = (scheme) => {
+  const m = typeof scheme === "string" && DUO_OFFSET.exec(scheme);
+  if (m) return [0, Number(m[1])];
+  return Object.prototype.hasOwnProperty.call(SCHEME_OFFSETS, scheme)
     ? SCHEME_OFFSETS[scheme]
     : SCHEME_OFFSETS.analogous;
+};
 
 // The white slot's exact value. Pinned, and the LIGHT end of the level's own
 // range is deliberately not used: white at L=0.90 is a very light grey and would
@@ -387,7 +408,7 @@ export function wordColor(level, seed, baseHue, cueIndex, wordIndex, opts) {
   const white = isWhiteSlot(slot);
 
   return {
-    hue, sat, light, white, duo: scheme === "duo",
+    hue, sat, light, white, duo: isDuoScheme(scheme),
     css: hslCss(hue, sat, light),
     rgb: hslRgbTriple(hue, sat, light),
   };
@@ -548,7 +569,7 @@ export function slotHsl(slot, L, seed, baseHue, saltTag, n, scheme) {
   // varies its TARGET LUMINANCE across a narrow band above the floor, and solves
   // lightness from that. Two red words in a line still differ, and every one of
   // them is readable, which drawing HSL lightness could not promise.
-  if (scheme === "duo") {
+  if (isDuoScheme(scheme)) {
     const sat = DUO_CHROMA.sat[0] + unit(saltTag + ":sat", n) *
       (DUO_CHROMA.sat[1] - DUO_CHROMA.sat[0]);
     const target = LUMA_FLOOR + unit(saltTag + ":luma", n) * DUO_CHROMA.lumaSpread;
