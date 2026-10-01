@@ -72,6 +72,7 @@ export const COLOR_LEVELS = ["off", "calm", "vivid", "wild"];
 // to a look you have already seen rather than guessing at it.
 export const COLOR_SCHEMES = [
   "mono", "analogous", "triad", "split", "complement", "rainbow", "duo", "primaries",
+  "reds", "materials", "warm",
 ];
 
 // The hues each scheme may use, as OFFSETS from the anchor, in degrees. Read as
@@ -169,14 +170,134 @@ const WHITE_SLOT = { sat: 0, light: 1 };
 // same sat/light pair is three times brighter in red than in blue. Varying HSL
 // lightness and hoping for the best is therefore varying the one thing that
 // decides whether the word can be read.
+// `duo` and `primaries` get their OWN chroma, and the shape of it is the whole
+// story of how this palette was arrived at -- twice in the wrong direction.
+//
+// It originally SOLVED lightness from a target luminance, on the reasoning that
+// luminance is the scarce resource and saturation is free. For a hue-0 red the
+// reasoning is sound and the conclusion is a pale colour: red carries 0.2126 of the
+// luminance budget, so to reach any decent luminance the only lever is mixing
+// toward white. Chasing a bright red produced rgb(255,132,132) -- "fading
+// colours", rejected by name -- and pulling the floor down to 115 produced
+// rgb(255,77,77), which was still rejected as "not vibrant red".
+//
+// Both rejections are the same error: the palette was solving for the quantity the
+// viewer does not care about. Nobody asked for luminance. They asked for RED. So
+// the accent now states a SATURATION and a LIGHTNESS directly, and the luminance
+// floor is demoted to what it always should have been -- a guard against a colour
+// that vanishes, not a target to be aimed at.
+//
+// Measured, at this table's range:
+//   sat 0.90 light 0.50   red rgb(242, 13, 13)  luma 62    <- vibrant
+//   sat 1.00 light 0.50   red rgb(255,  0,  0)  luma 54    <- pure
+//   sat 1.00 light 0.55   red rgb(255, 26, 26)  luma 74
+// and the orange at the same settings is rgb(242,108,13) -- which is a real orange
+// rather than the yellow that hue 25 becomes at high lightness, because the green
+// channel is held near a third of the red instead of being pushed up with it.
+// TWENTY NAMED REDS, DEALT AT RANDOM BUT SEEDED.
+//
+// Taken from a named-reds palette rather than generated, because a generated red
+// has no NAME and a name is what makes a colour choosable. The twenty are here as
+// hex, unmodified -- these are the colours, not a range that resembles them.
+//
+// THE DARK SIX, AND WHAT HAPPENS TO THEM
+// Measured luminance of all twenty, sorted:
+//   MAHOGANY 24   MAROON 27   BARN RED 34   CARMINE 34   BURGUNDY 34
+//   SANGRIA 39    RED 45      U.S. FLAG 51  CRIMSON 51    CHILI 59
+//   CANDY APPLE 60  FIRE BRICK 65  RASPBERRY 71  SCARLET 80  FERRARI 83
+//   IMPERIAL 84  PERSIAN 84  REDWOOD 105  INDIAN RED 116  SALMON 153
+//
+// Seven of the twenty sit below luma 51, which is the value that shipped broken:
+// red words at a fifth of white, losing every thin stroke, reported as "the red
+// word makes the sentence incorrect". Using mahogany at luma 24 on black would
+// bring that exact bug back wearing a nicer name.
+//
+// So each colour is lifted to the floor by ensureReadable(), which raises
+// LIGHTNESS while holding hue and saturation. Mahogany becomes a lighter brick
+// rather than mahogany; that is the trade, and it is made per colour and visibly
+// rather than by quietly dropping six names from the list the user chose. Every
+// lifted value is reported by check_color.mjs, so the list can be pruned by hand
+// if the lifted versions read worse than the originals.
+const REDS = [
+  ["MAHOGANY", "#420D09"], ["MAROON", "#800000"], ["BARN RED", "#7C0A02"],
+  ["CARMINE", "#960019"], ["BURGUNDY", "#8D021F"], ["SANGRIA", "#5E1914"],
+  ["RED", "#D30000"], ["U.S. FLAG", "#BF0A30"], ["CRIMSON", "#B80F0A"],
+  ["CHILI", "#C21807"], ["CANDY APPLE", "#FF0800"], ["FIRE BRICK", "#B22222"],
+  ["RASPBERRY", "#D21F3C"], ["SCARLET", "#FF2400"], ["FERRARI", "#FF2800"],
+  ["IMPERIAL", "#ED2939"], ["PERSIAN", "#CA3433"], ["REDWOOD", "#A45A52"],
+  ["INDIAN RED", "#CD5C5C"], ["SALMON", "#FA8072"],
+];
+
+// METALS AND MATERIALS, in the same spirit: named, exact, and chosen so the set
+// still reads as ONE palette rather than as a swatch book. Every one of these sits
+// in the warm half of the wheel or is a metal, so a line that mixes them stays
+// coherent -- which is the thing a random palette loses first.
+//
+// "materialistic" was read as metallic-and-material. Both readings are served:
+// the metals are here, and so are the earths and surfaces.
+const METALS_AND_MATERIALS = [
+  ["GOLD", "#FFD700"], ["BRASS", "#B5A642"], ["BRONZE", "#CD7F32"],
+  ["COPPER", "#B87333"], ["PEWTER", "#8E9291"],
+  ["RUST", "#B7410E"], ["TERRACOTTA", "#E2725B"], ["BRICK", "#CB4154"],
+  ["OXBLOOD", "#4A0000"], ["UMBER", "#635147"], ["SIENNA", "#A0522D"],
+  ["AUBURN", "#8B3E2F"], ["WINE", "#722F37"], ["SANDSTONE", "#C2B280"],
+];
+
+// THE WARM RAMP: yellow -> orange -> red -> crimson, ten named steps.
+//
+// Taken from a reference gradient rather than generated, and the ten are chosen to
+// sit ON that ramp rather than near it. Every one is checked against the same
+// floor, because the dark end of a warm ramp is exactly where legibility dies:
+// carmine at #B00040 measures luma 45 and is lifted, so it arrives as a deep red
+// rather than carmine.
+//
+// `warm` is what the batch renders with. `reds` and `materials` are kept, because a
+// user who picked twenty specific names should be able to return to exactly those
+// twenty with one flag.
+const WARM = [
+  ["GOLD", "#FFC300"], ["YELLOW", "#FFD400"], ["AMBER", "#FFB000"],
+  ["ORANGE", "#FF8A00"], ["ORANGE RED", "#FF5A00"], ["VERMILION", "#FF3B00"],
+  ["RED", "#F01A00"], ["CORAL RED", "#E0305A"], ["CRIMSON", "#DC143C"],
+  ["CARMINE", "#B00040"],
+];
+
+export const NAMED_PALETTES = {
+  reds: REDS,
+  // The twenty reds plus thirteen metals and materials -- 33 named colours dealt
+  // at random. `reds` is kept as its own palette rather than deleted, because a
+  // user who asked for twenty specific names should be able to go back to exactly
+  // those twenty with one flag.
+  materials: REDS.concat(METALS_AND_MATERIALS),
+  warm: WARM,
+};
+
+/** "#D30000" -> {hue, sat, light}. */
+export function hexToHsl(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const mx = Math.max(r, g, b);
+  const mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  const d = mx - mn;
+  if (d === 0) return { hue: 0, sat: 0, light: l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  if (mx === r) h = 60 * (((g - b) / d) % 6);
+  else if (mx === g) h = 60 * ((b - r) / d + 2);
+  else h = 60 * ((r - g) / d + 4);
+  return { hue: ((h % 360) + 360) % 360, sat: s, light: l };
+}
+
 const DUO_CHROMA = {
   sat: [0.90, 1.0],
-  // How far ABOVE the floor the accent's luminance may sit. Narrow, because the
-  // complaint this answers is "don't make fading colors" -- a wide spread means one
-  // word in a line is noticeably paler than its neighbour, which reads as a fade
-  // even when every value is individually legal. 0.04 is about ten levels of 255,
-  // which is variation without a fade.
-  lumaSpread: 0.04,
+  // Narrow, on purpose. The complaint was "fading colors", and a wide band is what
+  // makes one word in a line paler than its neighbour -- legal in isolation, a
+  // visible fade in a row.
+  light: [0.48, 0.54],
 };
 
 /** hsl -> [r,g,b] each 0..1. The one conversion in this file; everything uses it. */
@@ -328,7 +449,18 @@ export function lightForLuma(hue, sat, target) {
 // lever is desaturation, and that is why rgb(255,0,0) is luma 54 and always will
 // be. A hue-0 red at 115 is rgb(255,77,77) and there is no way to make it
 // redder at that brightness -- only darker, and dark is what broke it.
-export const LUMA_FLOOR = 0.45;
+// THE FLOOR IS A GUARD NOW, NOT A TARGET. It exists to reject a colour that
+// VANISHES on black, and 0.20 is that line: pure red rgb(255,0,0) measures 54/255
+// = 0.212, so 0.20 admits a fully saturated red untouched and rejects anything
+// darker. The shipped failure was luma 51, which is 0.20 exactly -- so the floor
+// sits at the boundary of the known-bad value rather than near it.
+//
+// It was 40, then 158, then 115, and the swing is the record of the palette being
+// aimed at the wrong target. 158 made "red" into rgb(255,132,132), because the
+// accent was solving lightness FROM this number. 115 made it rgb(255,77,77),
+// still not vibrant, for the same reason. The number only became the right number
+// once it stopped being the thing being aimed at.
+export const LUMA_FLOOR = 0.20;
 
 /**
  * Raise `light` until the colour clears LUMA_FLOOR. Applied to EVERY colour this
@@ -433,6 +565,49 @@ export function wordColor(level, seed, baseHue, cueIndex, wordIndex, opts) {
   if (!L) return null;
 
   const scheme = (opts && opts.scheme) || "rainbow";
+
+  // A NAMED PALETTE, if this scheme is one. It bypasses the HSL machinery entirely
+  // because a named palette is a list of exact colours, not a hue range: `mahogany`
+  // is #420D09 and not "a dark red near hue 0". Converting to HSL and back would
+  // round it, and the whole value of a named colour is that it is the one you meant.
+  //
+  // It still goes through ensureReadable, because seven of the twenty are below the
+  // floor -- see NAMED_PALETTES. What is NOT done is quietly dropping them: the
+  // user chose twenty names and gets twenty names, six of them lifted and
+  // reported.
+  const named = NAMED_PALETTES[scheme];
+  if (named) {
+    const accent = opts && Number.isFinite(opts.accent)
+      ? Math.min(Math.max(opts.accent, 0), 1) : 1;
+    let idx = Math.floor(unit(`${seed}:C${cueIndex}:named`, 0) * named.length);
+    // The accent draw still means something here: below 1.0 a named colour is
+    // replaced by the pinned white, which is how a mostly-white line with a few
+    // named accents is expressed.
+    if (accent < 1 && unit(`${seed}:C${cueIndex}:w${wordIndex}:accent`, 0) > accent) {
+      return {
+        hue: 0, sat: WHITE_SLOT.sat, light: WHITE_SLOT.light, white: true,
+        duo: false, css: hslCss(0, 0, 1), rgb: "255, 255, 255",
+      };
+    }
+    if (idx >= named.length) idx = named.length - 1;
+    const [name, hex] = named[idx];
+    const base = hexToHsl(hex);
+    const light = base ? ensureReadable(base.hue, base.sat, base.light) : 1;
+    return {
+      hue: base ? base.hue : 0,
+      sat: base ? base.sat : 0,
+      light,
+      white: false,
+      duo: false,
+      named: true,
+      name,
+      hex,
+      lifted: !!(base && light > base.light + 1e-9),
+      css: base ? hslCss(base.hue, base.sat, light) : "#ffffff",
+      rgb: base ? hslRgbTriple(base.hue, base.sat, light) : "255, 255, 255",
+    };
+  }
+
   // linePalette() deals the whole line's hues at once, because the ORDER is what
   // stops two neighbouring words landing on the same colour -- which is why this
   // is not a per-word draw any more. wordIndex is the only thing it needs.
@@ -497,6 +672,12 @@ export function letterColor(level, seed, baseHue, cueIndex, wordIndex, letterInd
   // the rainbow-across-a-word effect the `duo` scheme exists to avoid. White is
   // an ACCENT here, and an accent is flat.
   if (word && word.white) return word;
+
+  // A NAMED colour is exact. Clamping it into the level's sat/light range would
+  // replace mahogany with whatever the level's table happens to hold near it, which
+  // is the whole reason a named palette exists. It also varies its lightness only
+  // by the floor, so a letter never drifts off its word's colour.
+  if (word && word.named) return word;
 
   const [smin, smax] = L.step;
   const step = smin + unit(`${seed}:C${cueIndex}:w${wordIndex}:step`, 0) * (smax - smin);
@@ -630,8 +811,9 @@ export function slotHsl(slot, L, seed, baseHue, saltTag, n, scheme) {
   if (isDuoScheme(scheme)) {
     const sat = DUO_CHROMA.sat[0] + unit(saltTag + ":sat", n) *
       (DUO_CHROMA.sat[1] - DUO_CHROMA.sat[0]);
-    const target = LUMA_FLOOR + unit(saltTag + ":luma", n) * DUO_CHROMA.lumaSpread;
-    return { hue, sat, light: lightForLuma(hue, sat, target) };
+    const light = DUO_CHROMA.light[0] + unit(saltTag + ":light", n) *
+      (DUO_CHROMA.light[1] - DUO_CHROMA.light[0]);
+    return { hue, sat, light: ensureReadable(hue, sat, light) };
   }
 
   const range = L;

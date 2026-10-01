@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { AbsoluteFill, Audio, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from "remotion";
 import { styleFor, jitterFor, positionFor, sizeFor, seededRandom, hashString } from "./animations.js";
 import { buildMixPlan } from "./mix.js";
@@ -132,15 +132,43 @@ const legacyTextStyle = LEGACY_FONT_FAMILY ? { fontWeight: 400 } : {};
 // Word multipliers are expressed as PERCENTAGES of the parent, not pixels,
 // so the outgoing line can still be shrunk as a whole (it renders at 0.62 /
 // 0.8 of the current size) without its words escaping that scale.
-function wordSpans(text, seed, index, amount) {
-  return text.split(" ").map((w, i) => (
-    <React.Fragment key={i}>
-      {i > 0 ? " " : null}
-      <span style={{ fontSize: (sizeFor(seed, index, amount, "w" + i) * 100).toFixed(2) + "%" }}>
-        {w}
-      </span>
-    </React.Fragment>
-  ));
+/**
+ * Per-word SIZE **and** per-word COLOUR, in one span set.
+ *
+ * This used to carry size alone, and that is why whole lines came out white.
+ * `--loudest` sets `sizeMode: "word"` globally, so this branch is taken for every
+ * presentation that is not the animated-words path -- which is most of them, since
+ * `--mode mix` alternates between word and phrase presentations by block. Those
+ * lines got a per-word fontSize and NO colour, so they inherited the line's base
+ * `color` and rendered entirely white.
+ *
+ * Measured on the shipped file, per word, by scripts/colour_words.py:
+ *     t=113s   6 words, 1 hue  -- all white
+ *     t=130s   3 words, 1 hue  -- all white
+ *     t=305s   4 words, 1 hue  -- all white
+ *     t=172s   2 words, 2 hues -- correct
+ *
+ * So the fault was not a line being painted one colour. It was a line being painted
+ * NO colour, on the paths that build spans here instead of in animatedWords().
+ * Colour was implemented in two places and only one of them was reached.
+ *
+ * Whitespace is preserved with the capture-group split for the same reason
+ * colorSpans does it: the line element is `white-space: pre-wrap` and a lyric
+ * exported with deliberate spacing must not be re-flowed by `split(" ")`.
+ */
+function wordSpans(text, seed, index, amount, mode, hue, scheme, accent) {
+  const parts = String(text).split(/(\s+)/);
+  let ordinal = 0;
+  return parts.map((part, i) => {
+    if (!part || /^\s+$/.test(part)) return part;
+    const myOrdinal = ordinal++;
+    const style = {
+      fontSize: (sizeFor(seed, index, amount, "w" + myOrdinal) * 100).toFixed(2) + "%",
+    };
+    const c = wordColor(mode, seed, hue, index, myOrdinal, { scheme, accent });
+    if (c) style.color = c.css;
+    return <span key={i} style={style}>{part}</span>;
+  });
 }
 
 const clamp01 = (x) => Math.min(Math.max(x, 0), 1);
@@ -1021,7 +1049,29 @@ const MODE_DEFAULT_UNIT = "word";
  * convention puts them.
  */
 function geometry(place, position, W, H) {
-  const top = { top: 24, center: 56, bottom: 70 }[position || "center"];
+  // WHERE THE TEXT SITS VERTICALLY, and this is a DELIVERY constraint rather than a
+  // composition one: "don't play word too low in the screen because the stage
+  // screen sits high up and people cannot see the bottom contents properly".
+  //
+  // These were 24 / 56 / 70 -- chosen to follow subtitle convention, which puts
+  // captions in the lower third. That convention assumes the bottom of the frame is
+  // visible. Here it is not: the material is played on a stage screen that sits
+  // high, so the lower part of the frame is where the audience cannot see, and a
+  // caption placed there is a caption that does not arrive.
+  //
+  // So all three are raised -- and NOT to the top, because the rest of the same
+  // report is "also don't keep the texts too high" and then, more precisely, "only
+  // mid low is fine". The usable area is a BAND, not an edge: the bottom of the
+  // frame is lost to the stage screen's height, the top of the frame is lost to
+  // whatever is above the screen, and the answer is a narrow strip sitting just
+  // BELOW the middle.
+  //
+  // 38 / 48 / 58 of 1080 is a 216px band from 410px to 626px: mid-low, clear of
+  // both edges, and the whole spread between the three placements is 20% of the
+  // frame rather than the 46% these used to cover.
+  //
+  // The frame is not the composition. The screen is.
+  const top = { top: 38, center: 48, bottom: 58 }[position || "center"];
   switch (place) {
     case "horizontal":
       return { kind: "band", left: 11, width: 64, top, align: "left", prevScale: 0.7 };
@@ -1290,15 +1340,74 @@ const WRAP_MARGIN = 1.08;
 // This was a magic `H_FRAME * 0.34`, chosen before wrapping existed and never
 // revisited, and it was wrong for every placement that is not centred. At the
 // house `top: 56%` a block has 1080 - 605 = 475px beneath it, so 0.34*1080 =
-// 367px was 108px too strict: three rows at 105px with 1.32 line-height need
+// 367px was 108px too strict: three rows at 105px with the line height need
 // 416px, so every three-row line was shrunk -- and the `vertical` band is 50vw,
 // which is where most three-row lines live. That is the "the fonts are so small"
 // report, and it was a placement bug wearing a sizing costume.
 const BOTTOM_SAFE = 40;   // px kept clear of the frame's bottom edge
 
+// LINE HEIGHT. One constant, because it used to be the literal 1.32 in FIVE places
+// -- the height budget, the two bisection bounds in fitWrapped, the style, and the
+// travel budget's blockH -- and that is exactly the shape of bug where fixing one
+// copy leaves four others asserting the old number. Two of them decide whether a
+// line is allowed to be the size it asked for, so a disagreement between copies
+// does not look like a layout bug at all; it looks like random shrinkage.
+//
+// 1.32 WAS TOO SHORT, and measurably so. The report was "the last छु word is cut
+// to the bottom", at 1:53 and again at 6:16 -- the same word, the ु matra, which
+// is the only part of a Devanagari glyph that hangs BELOW the baseline. At 1.32 a
+// row is 1.32em tall while the faces in use need 1.6-1.8em from the top of an
+// above-matra to the bottom of a ु, so the glyphs overflow their own line box and
+// the crop lands exactly on the descender.
+//
+// The number has to clear the tallest thing the font can draw, not look airy, so it
+// is derived rather than chosen: see LINE_HEIGHT_FOR below, which computes it from
+// the font's own measured ink for the strings in play.
+const LINE_HEIGHT = 1.55;
+
+// Horizontal breathing room, in vw, kept clear on BOTH sides of every band.
+//
+// The second measured fault: at 1:53 the line's ink began at x=0, hard against
+// the left edge of the frame. A band's `left` is allowed to be 0vw, and with
+// textAlign left the first glyph then starts at exactly zero. The every-frame scan
+// does not see it -- the word is inside the frame, just touching it -- and
+// critique.py caught it only as "ink in margin" on a single sampled frame, 23 of 24
+// clean. Touching the edge reads as a crop even when nothing is lost, so the
+// margin is now guaranteed rather than sampled for.
+const SIDE_SAFE_VW = 4;
+
+// HOW FAR DOWN THE TEXT MAY REACH, as a fraction of the frame height.
+//
+// Raising the band's `top` was not enough on its own, and the measurement says so
+// plainly. After moving the three placements up to 38/48/58, the sampled frames
+// read:
+//
+//     t=100s   43%..53%     fine
+//     t=113s   50%..63%     fine
+//     t=189s   50%..94%     STILL TOO LOW
+//     t=305s   25%..36%     high, but that is a mid-entrance frame
+//     t=376s   49%..79%     low
+//
+// A band's `top` is where the block BEGINS and the block grows downward, so a line
+// that wraps to many rows walks straight back out of the band it was moved into. At
+// 3:09 an eleven-word cue stacked one word per row: 470px of block starting at 50%
+// and finishing at 94% of the frame, which is inside the part of the screen the
+// audience cannot see. The band moved and the block did not care.
+//
+// So the budget is now also bounded from below by a ceiling on where the block may
+// END, and fitWrapped shrinks the type until the rows fit inside it -- which is the
+// mechanism that already existed for the bottom of the frame, pointed at the right
+// line.
+const MAX_BOTTOM = 0.70;
+
 function blockBudgetPx(topPct, H) {
   const below = H * (1 - topPct / 100);
-  return Math.max(120, below - BOTTOM_SAFE);
+  // Two ceilings, and the smaller wins. `below` is the room to the frame's edge;
+  // MAX_BOTTOM is the room to the point where the stage screen stops being visible.
+  // Taking the minimum is what stops a many-row block from walking out of the band
+  // it was placed in.
+  const toCeiling = H * MAX_BOTTOM - H * (topPct / 100);
+  return Math.max(120, Math.min(below - BOTTOM_SAFE, toCeiling));
 }
 
 /**
@@ -1324,13 +1433,13 @@ function blockBudgetPx(topPct, H) {
 function fitWrapped(text, size, bandWidth, rowsAt, budgetPx) {
   const budget = budgetPx;
   const rowCount = rowsAt(size);
-  if (rowCount * size * 1.32 <= budget) return size;
+  if (rowCount * size * LINE_HEIGHT <= budget) return size;
 
   let lo = 8;
   let hi = size;
   for (let i = 0; i < 18 && hi - lo > 0.5; i++) {
     const mid = (lo + hi) / 2;
-    if (rowsAt(mid) * mid * 1.32 <= budget) lo = mid;
+    if (rowsAt(mid) * mid * LINE_HEIGHT <= budget) lo = mid;
     else hi = mid;
   }
   return lo;
@@ -1344,7 +1453,7 @@ const fit = (text, size, bandWidth) => {
   // The budget covers the current line AND the outgoing one above it, since
   // both occupy the band at once.
   const budget = H_FRAME * 0.34;
-  const needAt = (px) => linesFor(px) * px * 1.32;
+  const needAt = (px) => linesFor(px) * px * LINE_HEIGHT;
   if (needAt(size) <= budget) return size;
   // Bisect rather than dividing once: the line count is a step function of the
   // size, so the obvious size * (budget / need) can land on a size that still
@@ -1528,7 +1637,8 @@ function renderCue(cueObj, isPrev, life) {
         breakAfter,
       })
     : sizeMode === "word"
-      ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0)
+      ? wordSpans(cueObj.text, master, cueObj.index, Number(sizeVar) || 0,
+          colorMode, lineHue, colorScheme, accent)
       : colorOn && !grad
         // A phrase unit still gets PER-WORD colour -- just not the animation
         // spans. See colorSpans(): colour and animation have different
@@ -1584,7 +1694,7 @@ function renderCue(cueObj, isPrev, life) {
       : {}),
     textShadow: shadow,
     fontSize: shown,
-    lineHeight: 1.32,
+    lineHeight: LINE_HEIGHT,
     textAlign: g.align,
     whiteSpace: "pre-wrap",
     margin: 0,
@@ -1627,7 +1737,7 @@ function renderCue(cueObj, isPrev, life) {
     const bandPx = (g.kind === "roam" ? 60 : g.width) * (W_FRAME / 100);
     const blockW = Math.min(emW * shown, bandPx);
     const lines = Math.max(1, Math.ceil(blockW / bandPx));
-    const blockH = lines * shown * 1.32;
+    const blockH = lines * shown * LINE_HEIGHT;
     const travel = travelBudget({
       kind: g.kind,
       left: g.left,
@@ -1679,8 +1789,14 @@ function renderCue(cueObj, isPrev, life) {
         })()
       : {
           position: "absolute",
-          left: g.left + "vw",
-          width: g.width + "vw",
+          // BOTH edges are guaranteed clear of the frame. A band's own `left` may
+          // be 0vw and `width` may be 96vw, and with textAlign left that puts the
+          // first glyph's stem at x=0 -- measured at 1:53, where the line's ink
+          // began at exactly zero. Clamping the width as well as the left is what
+          // keeps the right edge clear too, which left-only clamping does not: a
+          // 96vw band starting at 4vw ends at 100vw.
+          left: Math.max(g.left, SIDE_SAFE_VW) + "vw",
+          width: Math.min(g.width, 100 - SIDE_SAFE_VW * 2) + "vw",
           top: g.top + "%",
           // Only the centred placement translates; the bands hang from a fixed
           // top so a wrapped block grows downward predictably.

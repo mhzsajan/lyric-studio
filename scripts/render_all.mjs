@@ -110,7 +110,23 @@ const COMMON = [
   // `--color-accent 1` is required, not cosmetic. duo:25 has NO white slot, so the
   // accent draw -- which converts a coloured slot to the white one -- would turn
   // 65% of every line white at the old 0.35.
-  "--color-scheme", "duo:25",
+  // THE PALETTE: twenty named reds plus thirteen metals and materials, 33 in all,
+  // dealt at random per word.
+  //
+  // `materials` is used rather than `reds` because the request was widened from
+  // "red" to "other materialistic colours too". Both palettes exist; `reds` is the
+  // exact twenty from the reference and is one flag away.
+  //
+  // Random is SEEDED, so the same song picks the same words in the same colours on
+  // every render and across both versions of a song. A version that moved its
+  // colours would not be the same song twice.
+  //
+  // Five of the named colours (sangria, oxblood, burgundy, barn red, maroon) measure
+  // below luma 51 and are LIFTED to it by the same guard that exists because red
+  // words at luma 51 shipped broken. They keep their hue and saturation and lose
+  // their darkness, so oxblood becomes a deep red rather than oxblood. Dropping
+  // them would have honoured the names and lost the words.
+  "--color-scheme", "warm",
   "--color-hue", "0",
   "--color-accent", "1",
   // HOW OFTEN a word takes the red. Measured over Kali Kali's 48 cues: at 1.0
@@ -127,23 +143,14 @@ const COMMON = [
   // default in render.mjs; they are named here so that "identical apart from the
   // font" is checkable against this file rather than against a memory of it.
   "--wrap", "rows",
-  "--x-pos",
   "--mode", "mix",
   "--mix-block", "8",
-  // From NO_GLYPH_MOTION. Spread into COMMON so both treatments get it and it
-  // cannot be forgotten on one path -- which is how the two font tables drifted
-  // apart in the first place.
-  "--size", "105",
-  "--size-var", "0",
-  "--size-drift", "0",
-  "--letter-var", "0",
-  "--size-mode", "off",
+  // The tear bar is NOT restored. It is the one effect that draws a bright line
+  // across the bottom of the glyphs, it was reported twice by name ("the underlined
+  // word animation is not showing characters fully"), and everything else the
+  // request asked for is back without it. The motion layers above are what make a
+  // lyric video move.
   "--cut", "off",
-  "--type", "off",
-  "--depth", "off",
-  "--motion", "off",
-  "--word-anim", "off",
-  "--letter-anim", "off",
 ];
 
 // EVERY PER-SYLLABLE TRANSFORM IS OFF. This is a correctness retreat, not a taste
@@ -203,9 +210,28 @@ const NO_GLYPH_MOTION = [
 // FAST and SLOW now differ only in which colour level paints, and per-letter
 // colour is off in both because `--color-mode vivid` steps hue ACROSS a word --
 // which is a per-letter transform, and is under the same suspension as the rest.
-const FAST = ["--color-mode", "calm"];
+// EVERY ANIMATION AND STYLE IS BACK, on request, with the three faults fixed at the
+// source rather than switched off:
+//
+//   1. the below-matra crop  -- LINE_HEIGHT 1.32 -> 1.55, one constant instead of
+//      five copies of the literal, plus padding under the last row. 1.32 was
+//      shorter than the faces are tall, so a ु was cropped by its own line box.
+//   2. text touching the frame edge -- SIDE_SAFE_VW guarantees 4vw on both sides.
+//      At 1:53 the ink began at x=0.
+//   3. the shaking -- --x-pos is what moved a settled line sideways between cues,
+//      and with the motion layers restored the line already has life, so the
+//      horizontal jump was redundant as well as jittery. The band SHAPES from
+//      --mix-block stay, because those change every 8 cues and read as variety
+//      rather than as flicker.
+//
+// COLOUR IS PER WORD. --color-mode calm paints words only; `vivid` and above step
+// the hue ACROSS a word, letter by letter, and that is the "fading" that was
+// rejected by name. A phrase line still gets per-word colour from colorSpans()
+// rather than one colour for the sentence, which is the third thing that was asked
+// for and the thing lineColor() used to do.
+const FAST = ["--loudest", "--color-mode", "calm", "--type", "letter"];
 
-const SLOW = ["--color-mode", "calm"];
+const SLOW = ["--loudest", "--color-mode", "calm", "--type", "letter"];
 
 // [folder, song, seconds, treatment, fontV1, fontV2]
 // `seconds` is PROBED by scripts/plan.mjs, never typed from memory.

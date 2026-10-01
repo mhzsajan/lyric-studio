@@ -34,7 +34,7 @@ import { readFileSync } from "node:fs";
 import {
   wordColor, letterColor, levelHasLetterColor, levelTintsGlow, hslRgbTriple,
   hslCss, gradientCss, linePalette, slotHsl, isWhiteSlot, luma, LUMA_FLOOR,
-  lightForLuma, ensureReadable,
+  lightForLuma, ensureReadable, NAMED_PALETTES, hexToHsl,
   COLOR_LEVELS, COLOR_SCHEMES,
 } from "../src/color.js";
 import { splitGraphemes } from "../src/letters.js";
@@ -463,35 +463,81 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
   // So: the floor is high, and the code RAISES lightness to meet it. The cost is
   // that a readable hue-0 red is a light red, and that is asserted below as an
   // explicit, visible trade rather than smuggled in as a dim word.
-  // The floor's job is to EXCLUDE THE CATASTROPHIC CASE, not to maximise contrast.
+  // THE FLOOR IS A GUARD AGAINST A VANISHING COLOUR, and nothing more.
   //
-  // This assertion used to be `LUMA_FLOOR >= 0.5`, i.e. "as bright as possible
-  // without going white" -- and it is why the shipped red became rgb(255,132,132),
-  // a pale salmon the user rejected by name. A floor that high is not a readability
-  // floor, it is a saturation ceiling wearing one, and asserting it meant the
-  // palette was pinned to the palest legal colour forever.
+  // It read `>= 0.5` once ("as bright as possible without going white") and then
+  // `* 255 > 90` ("comfortably clear of pure red's 54"). Both were the palette
+  // aiming at this number rather than the number protecting the palette, and both
+  // produced a red the user rejected by name: rgb(255,132,132) as "fading
+  // colours", then rgb(255,77,77) as "not vibrant red". Two rejections, one cause.
   //
-  // So it is asserted as the two things it actually has to guarantee:
-  //   1. comfortably clear of pure red's own luma of 54, which is the failure that
-  //      shipped (red words measured at 51, losing every thin stroke); and
-  //   2. still SATURATED -- the colour it produces at the floor must have its
-  //      dominant channel far above the other two, or "red" has become pink.
-  ok(LUMA_FLOOR * 255 > 90,
-    "the floor clears the failure it exists to prevent (pure red, luma 54)",
-    `${(LUMA_FLOOR * 255).toFixed(0)}/255, ${(LUMA_FLOOR / (54 / 255)).toFixed(1)}x pure red`);
+  // So it is asserted as what it is for. It must admit a FULLY SATURATED red -- if
+  // it excluded rgb(255,0,0) then "vibrant" would be unreachable and the palette
+  // would be quietly capped at pink again -- and it must still exclude the luma
+  // that actually shipped broken.
+  ok(LUMA_FLOOR * 255 <= 54,
+    "the floor ADMITS a fully saturated red, so 'vibrant' stays reachable",
+    `floor ${(LUMA_FLOOR * 255).toFixed(0)}/255 vs pure red's 54`);
 
   {
-    // The colour the floor actually produces at hue 0, asserted on its rgb. A
-    // floor can be "high enough" and still deliver pink, which is precisely what
-    // 158 did.
-    const need = lightForLuma(0, 1.0, LUMA_FLOOR);
-    const q = need + 1.0 - need;
-    const p = 2 * need - q;
-    const rgb = [q, p, p].map((v) => Math.round(v * 255));
-    const dominant = rgb[0] - Math.max(rgb[1], rgb[2]);
-    ok(dominant >= 120,
-      "and the red it produces is still RED, not a pale wash",
-      `rgb(${rgb.join(",")}) at the floor, R over G/B by ${dominant}`);
+    // THE PALETTE IS NO LONGER GENERATED, so there is no single "the red" to
+    // assert. This block used to sample one word from duo:25 and demand a
+    // saturated red, and it failed the moment the palette became a LIST of named
+    // colours -- which is correct behaviour on its part and a stale assertion on
+    // this one's. What replaced it asserts the properties that hold for EVERY
+    // named colour, which is a stronger claim than the one it took over from.
+    //
+    // "Vibrant" cannot mean "one exact rgb" across mahogany and salmon, so it
+    // means: the colour is not washed out, and not so dark that it vanishes.
+    // "Washed out" cannot be tested by asking whether a colour is pale. Sandstone
+    // and salmon and indian red ARE pale -- that is what they are -- and an
+    // assertion that flags them is asserting that the palette contain no light
+    // colours, which is a different thing and not a true one. The first version
+    // of this check did exactly that and failed on sandstone.
+    //
+    // The real invariant is that the pipeline must not BLEACH a colour: what comes
+    // out may be lighter than what went in (that is the floor doing its job) but it
+    // must never be LESS saturated. A named colour that arrives paler than its hex
+    // has been through a lightness-solving path it should not have been.
+    let bleached = null;
+    let invisible = null;
+    let seen = 0;
+    const byName = new Map();
+    for (let cue = 0; cue < 20; cue++) {
+      for (let w = 0; w < 8; w++) {
+        for (const pal of ["reds", "materials"]) {
+          const c = wordColor("calm", SEED, 0, cue, w, { scheme: pal, accent: 1 });
+          if (!c || c.white || !c.hex) continue;
+          seen++;
+          const src = hexToHsl(c.hex);
+          if (!src) continue;
+          if (!byName.has(c.name)) byName.set(c.name, { src, out: c, lifted: c.lifted });
+          const l = luma(c.hue, c.sat, c.light);
+          if (l < LUMA_FLOOR - 1e-6) invisible = invisible + ` ${c.name} ${(l * 255).toFixed(0)}`;
+          if (c.sat < src.sat - 0.02) {
+            bleached = bleached + ` ${c.name} sat ${src.sat.toFixed(2)}->${c.sat.toFixed(2)}`;
+          }
+        }
+      }
+    }
+    ok(!invisible, "and no named colour is dark enough to vanish",
+      invisible || `${seen} draws, all at or above ${(LUMA_FLOOR * 255).toFixed(0)}/255`);
+    ok(!bleached, "and none is BLEACHED -- a named colour may be lifted, never desaturated",
+      bleached || `${byName.size} named colours, saturation never reduced`);
+
+    // Report the lifts, because a lifted colour is no longer the colour it is named
+    // after and that should be visible rather than discovered on screen.
+    const liftedNames = [...byName.entries()].filter(([, v]) => v.lifted).map(([k]) => k);
+    ok(true, "the lifts are enumerated, not hidden",
+      liftedNames.length
+        ? `${liftedNames.length} lifted to the floor: ${liftedNames.join(", ")}`
+        : "none needed");
+
+    const sample = NAMED_PALETTES.reds.map(([, hex]) => hexToHsl(hex)).filter(Boolean);
+    ok(sample.length === NAMED_PALETTES.reds.length,
+      "and every named hex parses to a colour, so no name is a lie",
+      `${sample.length}/${NAMED_PALETTES.reds.length} reds, ` +
+      `${NAMED_PALETTES.materials.length} colours in materials`);
   }
 
   // The load-bearing one: the floor must hold for the DARK hues, not just red.
@@ -636,8 +682,8 @@ console.log("\n=== 12. the LUMA floor, which is the one that matters ===");
     const pure = [255, 0, 0];
     const pureL = 0.2126 * 255;
     const sample = reds[0];
-    ok(pureL < LUMA_FLOOR * 255,
-      "and it is recorded that a PURE red cannot meet the floor (so the accent is light)",
+    ok(pureL >= LUMA_FLOOR * 255,
+      "and a PURE red is now legal -- the floor sits below it, so vibrant is reachable",
       `rgb(255,0,0) = ${pureL.toFixed(0)}/255; a shipped red is rgb(${sample.r},${sample.g},${sample.b}) = ${(sample.l * 255).toFixed(0)}/255`);
   }
 
