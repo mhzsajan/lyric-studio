@@ -1494,7 +1494,14 @@ async function run(audioPath, lrcPath) {
   // tonal and safe. `rainbow` reproduces the pre-scheme behaviour exactly, so a
   // look you have already seen is still reachable by name.
   const schemeArg = flag("--color-scheme") || "analogous";
-  if (!COLOR_SCHEMES.includes(schemeArg)) {
+  // `duo:<degrees>` is a legal scheme name and is NOT in COLOR_SCHEMES, because it
+  // is an anchor plus an INTERVAL rather than one of the fixed tables. Validating
+  // it here costs nothing and its absence cost a render: the palette was changed
+  // to duo:25, `node --check` passed, the batch was launched, and every job died
+  // at argument parsing with a bare "Unknown --color-scheme". The gate was right
+  // and the feature was unreachable from the command line.
+  const duoArg = /^duo:-?\d+(?:\.\d+)?$/.exec(schemeArg);
+  if (!COLOR_SCHEMES.includes(schemeArg) && !duoArg) {
     console.error('  Unknown --color-scheme "' + schemeArg + '". Use one of: ' +
       COLOR_SCHEMES.join(", ") + ".");
     process.exitCode = 1;

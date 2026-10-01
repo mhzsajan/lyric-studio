@@ -94,19 +94,23 @@ const FONTSET = {
 // the three-rung comparison: 105 / 0.08 / 0.05. Red and white only, duo at hue 0.
 const COMMON = [
   "--size-preset", "medium",
-  // THE PALETTE: red, orange, blue and a green tint, dealt across the line so
-  // neighbouring words differ (linePalette is a seeded permutation, not a modulo,
-  // so words 1 and 4 never land on the same hue).
+  // THE PALETTE: red and orange, nothing else.
   //
-  // `primaries` is [0, 25, 120, 240] -- red, orange, green, blue. It is not
-  // `triad`, which is [0, 120, 240] and has no orange in it; orange is the colour
-  // that makes the set read as a palette rather than as three traffic lights.
+  // `duo:25` is the anchor (hue 0 = red) and a second slot 25 degrees away, which
+  // at hue 0 is orange. It replaced `primaries` ([0, 25, 120, 240] -- red, orange,
+  // green, blue) on request: green and blue are out.
   //
-  // `--color-accent 1` matters here and was 0.35 for the red-and-white duo.
-  // `primaries` has NO white slot, so the accent draw -- which converts a coloured
-  // slot to the white one -- would have turned 65% of every line white. At 1.0
-  // every word takes a colour from the set.
-  "--color-scheme", "primaries",
+  // There is also a reason to prefer two adjacent hues over four spread ones, and
+  // it is not only taste. linePalette deals a seeded PERMUTATION of the slots, so
+  // with two slots every neighbouring pair differs and a 2-word line is red/orange
+  // or orange/red. With four, a 3-word line gets three different hues and the line
+  // stops reading as one coloured object -- which is the same failure the stepped
+  // hue gradient exists to avoid, one level up.
+  //
+  // `--color-accent 1` is required, not cosmetic. duo:25 has NO white slot, so the
+  // accent draw -- which converts a coloured slot to the white one -- would turn
+  // 65% of every line white at the old 0.35.
+  "--color-scheme", "duo:25",
   "--color-hue", "0",
   "--color-accent", "1",
   // HOW OFTEN a word takes the red. Measured over Kali Kali's 48 cues: at 1.0
